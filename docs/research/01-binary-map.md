@@ -1,0 +1,103 @@
+# 01 — Binary Map of StarWarsG.exe
+
+**Status:** In progress — static analysis phase
+**Last updated:** 2026-08-15
+
+## Target Binaries
+
+| Binary | Location | Notes |
+|---|---|---|
+| `StarWarsG.exe` (base) | `GameData/StarWarsG.exe` | 11.5 MB, PE32+ x86-64, 7 sections |
+| `StarWarsG.exe` (FoCs) | `corruption/StarWarsG.exe` | 12.4 MB, PE32+ x86-64, 7 sections |
+| `swfoc.exe` | `corruption/swfoc.exe` | 1.7 MB launcher, links TBB + libcurl |
+| `PerceptionFunctionG.dll` | both dirs | Unmangled C++ exports — architectural roadmap |
+| `runme.exe` / `runme2.exe` | root | 32-bit Steam launcher stubs |
+
+## PE Facts (FoCs StarWarsG.exe)
+
+- Image size: `0xcc0000`, Entry: `0x76a428`
+- TimeDateStamp: `1728062355` (Oct 2024 remaster build)
+- DLL characteristics: `0x8160` (ASLR, DEP, NX)
+- Sections: `.text` (0x7fb4b7), `.rdata`, `.data`, `.pdata`, `_RDATA`, `.rsrc`, `.reloc`
+
+## Imports (18 DLLs)
+
+SHLWAPI, WINMM, POWRPROF, steam_api64 (11), KERNEL32 (163), USER32 (68), GDI32 (17),
+ADVAPI32, SHELL32, ole32, OLEAUT32, WS2_32 (18), PerceptionFunctionG (10),
+COMCTL32, d3d9 (1), mss64 (38), bink2w64 (11), d3dx9_43 (29)
+
+## Threading Evidence Found So Far
+
+### Strings in StarWarsG.exe
+
+| String | Offset (approx) | Meaning |
+|---|---|---|
+| `ThreadLockMutexClass -- %s failed to obtain mutex within 10 seconds (current owner is %s)` | 0x8505f0 | Engine mutex with timeout diagnostics |
+| `ThreadLockMutexClass -- Failed to obtain mutex within 10 seconds` | 0x850650 | Second variant (no owner info) |
+| `LoadThread` | 0x803b54 | Threaded loading path exists |
+| `LuaCreateThread: _Name -- Expected a thread id parameter` | 0x855858 | Lua can spawn threads via binding |
+| `LuaCreateThread::Ki...` | 0x8558a3 | Second Lua thread error string |
+
+### TBB Usage (in swfoc.exe launcher)
+
+`tbbR.dll` imports include:
+- `concurrent_queue_base_v3` (ctor, push_if_not_full, pop_if_present, size, empty, clear)
+- `task_scheduler_init` (`default_num_threads`, `initialize`)
+- `queuing_rw_mutex` + `scoped_lock` (acquire/release)
+
+This confirms **Intel TBB is available in-process** — the remaster's FoCs launcher uses it.
+Whether `StarWarsG.exe` itself uses TBB directly is TBD (only 1 "tbb" string match in the base exe).
+
+## PerceptionFunctionG.dll — Class Map
+
+Unmangled exports reveal these engine classes:
+
+- `ThePerceptionFunctionManagerClass` — singleton manager; `System_Initialize(MegaFileManagerClass*, bool)`, `System_Shutdown()`, `Create()`
+- `PerceptionFunctionClass` — single perception function; `Build(name, eq)`, `Rebuild()`, `Evaluate(context, &result)`, `Add_Node()`, `Get_Name()`, `Get_Perception_Token_String()`
+- `PerceptionFunctionCallClass` — call binding; `Create(name)`, `Add_Binding(tokenType, tokenType)`, `Evaluate()`
+- `PerceptionContextClass` — evaluation context
+- `PerceptionEvaluationStateClass` — evaluation state
+- `DatabaseObjectManagerClass<T>` — generic object DB: `Add_Managed_Object`, `Get_Managed_Object`, `Remove_Managed_Object`, `Get_Iterator`, `String_To_UInt`, `UInt_To_String`, `Cleanup`
+- `DatabaseUIntConversionClass` — uint <-> string conversion
+- `DynamicEnumConversionClass<T>` — enum conversion
+- `DynamicVectorClass<T>` — dynamic array
+
+`Init_Perception_DLL` signature (demangled shape):
+```
+Init_Perception_DLL(
+    DynamicEnumConversionClass<PerceptionTokenType>*,
+    fn(*PerceptionContextClass, PerceptionTokenType, PerceptionTokenType) -> bool,
+    fn(const *PerceptionContextClass, *PerceptionEvaluationStateClass, *double) -> bool,
+    fn(const *PerceptionContextClass, const *PerceptionFunctionClass) -> void,
+    fn(float, float) -> float,
+    fn(int) -> *void,
+    fn(const *basic_string) -> bool,
+    fn(const *basic_string) -> void,
+    fn(const *basic_string) -> const *DatabaseUIntConversionClass,
+    member_fn_ptr(...),
+    member_fn_ptr(...),
+    *MegaFileManagerClass, *bool,
+    const *DynamicVectorClass<basic_string>,
+    ...)
+```
+
+This is a **callback injection surface**: the engine passes 11 function pointers into the
+perception DLL so it can evaluate perception queries (token matching, math, memory alloc,
+string lookup, megafile access) without direct engine linkage.
+
+## Next Steps
+
+1. Install Ghidra headless + radare2
+2. Full disassembly of `corruption/StarWarsG.exe`
+3. Find main loop, update tick, render path
+4. Locate `ThreadLockMutexClass` methods and all call sites
+5. Find what `LoadThread` actually threads
+6. Locate `LuaCreateThread` binding and the Lua state(s)
+7. Map globals: world object database, perception manager, Lua state pointer
+
+## Known Open Questions
+
+- Does StarWarsG.exe itself link/load tbbR.dll, or is TBB only in swfoc.exe?
+- How many threads does the game actually spawn at runtime? (dynamic analysis)
+- Which mutexes gate the main sim tick?
+- Is there a separate render thread in the 64-bit port? (The 2006 original was single-threaded with a "Loading" thread only.)

@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+dist/
+*.o
+*.obj
+*.dll
+*.exe
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+.commandcode/
