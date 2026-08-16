@@ -29,6 +29,8 @@ add_library(eaw_core STATIC
     core/path_grid.cpp
     core/pathfinding.cpp
     core/perception.cpp
+    core/ai_targeting.cpp
+    core/ai_driver.cpp
     core/unit_data_loader.cpp
     core/pg_bindings.cpp
     core/pg_object_bindings.cpp
@@ -148,6 +150,12 @@ add_executable(perception_tests
 )
 target_link_libraries(perception_tests PRIVATE eaw_core)
 add_test(NAME perception_tests COMMAND perception_tests)
+
+add_executable(ai_tests
+    tests/test_ai.cpp
+)
+target_link_libraries(ai_tests PRIVATE eaw_core)
+add_test(NAME ai_tests COMMAND ai_tests)
 
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test

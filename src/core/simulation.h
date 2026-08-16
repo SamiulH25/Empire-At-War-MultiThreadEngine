@@ -11,14 +11,17 @@
 // per-object subsystems parallelize inside it later.
 #pragma once
 
+#include "core/ai_driver.h"
 #include "core/game_constants.h"
 #include "core/job_system.h"
 #include "core/meg_manager.h"
 #include "core/object_model.h"
 #include "core/path_grid.h"
 #include "core/pathfinding.h"
+#include "core/perception.h"
 #include "core/script_manager.h"
 
+#include <memory>
 #include <unordered_map>
 
 namespace eaw {
@@ -43,6 +46,17 @@ public:
 
     // The configured pathfinding options (for telemetry).
     const PathfindingSystem::Options& pathOptions() const { return pathOptions_; }
+
+    // Perception equations (loaded via loadPerceptions or externally).
+    PerceptionSystem& perceptions() { return perceptions_; }
+    const PerceptionSystem& perceptions() const { return perceptions_; }
+
+    // Loads perception equations from XML (see PerceptionSystem).
+    void loadPerceptions(const std::string& xmlText);
+
+    // Sets the AI attack equation used for taskforce targeting
+    // ("" = built-in default).
+    void setAiAttackEquation(const std::string& eq) { aiEquation_ = eq; }
 
     // Advances the sim by dt seconds: time += dt, pump scripts, then run the
     // parallel object update (per-object slices on the worker pool), the
@@ -73,6 +87,7 @@ private:
     MegaFileManager files_;
     ScriptManager scripts_;
     JobSystem jobs_;
+    PerceptionSystem perceptions_;
     // 3D routing grid: 256x256x64 altitude bands at 2-unit cells.
     PathGrid grid_{256, 256, 64, 2.0};
     PathfindingSystem::Options pathOptions_;
@@ -81,6 +96,8 @@ private:
     unsigned long long updateTicks_ = 0;
     unsigned long long totalShots_ = 0;
     std::unordered_map<int, Vec3> positions_;
+    std::unique_ptr<AiDriver> ai_;
+    std::string aiEquation_;
 };
 
 } // namespace eaw

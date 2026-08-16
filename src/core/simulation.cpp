@@ -162,10 +162,19 @@ void Simulation::configure(const GameConstants& gc) {
     pathfinding_.setOptions(pathOptions_);
 }
 
+void Simulation::loadPerceptions(const std::string& xmlText) {
+    perceptions_.loadEquations(xmlText);
+}
+
 void Simulation::tick(double dt) {
     time_ += dt;
     scripts_.pump(dt);
     sim().pruneDeadUnits();
+    // AI: taskforces pick targets via perception (parallel evaluation).
+    if (!ai_) ai_ = std::make_unique<AiDriver>(jobs_, perceptions_);
+    for (const auto& p : sim().allPlayers()) {
+        if (!p.human) ai_->runStep(sim(), p.id, time_, aiEquation_);
+    }
     snapshotPositions();
     stepPathfinding();
     updateObjects(dt);
