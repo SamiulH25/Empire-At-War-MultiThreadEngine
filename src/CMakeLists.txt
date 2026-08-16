@@ -65,6 +65,20 @@ add_executable(mod_tool
 )
 target_link_libraries(mod_tool PRIVATE eaw_core)
 
+# Patch DLL (Tier 3): d3d9 proxy that hooks the game's sim tick.
+add_subdirectory(../third_party/minhook ${CMAKE_BINARY_DIR}/minhook)
+add_library(patch_d3d9 SHARED
+    proxy/d3d9.cpp
+    proxy/d3d9.def
+)
+set_target_properties(patch_d3d9 PROPERTIES PREFIX "" OUTPUT_NAME "d3d9")
+target_link_libraries(patch_d3d9 PRIVATE minhook)
+target_include_directories(patch_d3d9 PRIVATE ../third_party/minhook/include)
+# MinHook's x64 trampolines must not use the red zone.
+if(MINGW)
+    target_compile_options(patch_d3d9 PRIVATE -mno-red-zone)
+endif()
+
 # Tests
 enable_testing()
 add_executable(meg_tests
