@@ -7,9 +7,11 @@ extern "C" {
 namespace eaw {
 
 ScriptManager::ScriptManager(MegaFileManager& files)
-    : files_(files) {
+    : files_(files), events_(sim_) {
     registerPgBindings(host_);
     registerObjectBindings(host_, sim_);
+    registerEventBindings(host_, events_, sim_);
+    events_.attach(host_.state());
     setEngineTime(host_.state(), time_);
 }
 
@@ -26,6 +28,7 @@ void ScriptManager::pump(double dt) {
     time_ += dt;
     setEngineTime(host_.state(), time_);
     pumpThreads(host_.state());
+    events_.pump(time_);
 }
 
 int ScriptManager::threadCount() const {

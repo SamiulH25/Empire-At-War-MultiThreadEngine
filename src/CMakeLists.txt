@@ -25,8 +25,10 @@ add_library(eaw_core STATIC
     core/lua_host.cpp
     core/meg_manager.cpp
     core/object_model.cpp
+    core/event_system.cpp
     core/pg_bindings.cpp
     core/pg_object_bindings.cpp
+    core/pg_event_bindings.cpp
     core/script_manager.cpp
     core/simulation.cpp
 )
@@ -100,6 +102,12 @@ add_executable(simulation_tests
 )
 target_link_libraries(simulation_tests PRIVATE eaw_core)
 add_test(NAME simulation_tests COMMAND simulation_tests)
+
+add_executable(event_system_tests
+    tests/test_event_system.cpp
+)
+target_link_libraries(event_system_tests PRIVATE eaw_core)
+add_test(NAME event_system_tests COMMAND event_system_tests)
 
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test

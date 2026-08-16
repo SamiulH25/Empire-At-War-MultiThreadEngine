@@ -1,5 +1,7 @@
 #include "core/pg_object_bindings.h"
 
+#include "core/lua_wrappers.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -14,61 +16,6 @@ extern "C" {
 namespace eaw {
 
 namespace {
-
-// ---- wrapper userdata ---------------------------------------------------
-// Each wrapper is userdata containing {kind, id} + a back-pointer to the sim.
-// kinds: 1 = GameObject, 2 = Player, 3 = ObjectType, 4 = Position (id unused)
-
-enum class WrapperKind : int { Object = 1, Player = 2, Type = 3, Position = 4, Command = 5 };
-
-struct Wrapper {
-    SimState* sim;
-    WrapperKind kind;
-    int id;
-    // Position wrappers carry their coords inline; command blocks carry a
-    // result value (0 = nil/false).
-    Vec3 pos;
-    double result = 0;
-    bool finished = true;
-};
-
-const char* kWrapperMeta = "LuaWrapperMetaTable";
-
-Wrapper* checkWrapper(lua_State* s, int idx) {
-    return static_cast<Wrapper*>(luaL_checkudata(s, idx, kWrapperMeta));
-}
-
-// The global query functions receive the SimState as a lightuserdata upvalue.
-SimState* simFromUpvalue(lua_State* s, int idx) {
-    return static_cast<SimState*>(lua_touserdata(s, lua_upvalueindex(idx)));
-}
-
-// Pushes a wrapper userdata of the given kind/id.
-void pushWrapper(lua_State* s, SimState* sim, WrapperKind kind, int id) {
-    Wrapper* w = static_cast<Wrapper*>(lua_newuserdata(s, sizeof(Wrapper)));
-    w->sim = sim;
-    w->kind = kind;
-    w->id = id;
-    luaL_getmetatable(s, kWrapperMeta);
-    lua_setmetatable(s, -2);
-}
-
-// Pushes a wrapper for a game object (or nil if not found/alive=false).
-void pushObject(lua_State* s, SimState* sim, const GameObject* o) {
-    if (!o || !o->alive) {
-        lua_pushnil(s);
-        return;
-    }
-    pushWrapper(s, sim, WrapperKind::Object, o->id);
-}
-
-// ---- shared helpers -----------------------------------------------------
-
-const GameObject* wrapperObject(lua_State* s, Wrapper* w) {
-    if (w->kind != WrapperKind::Object) return nullptr;
-    const GameObject* o = w->sim->object(w->id);
-    return (o && o->alive) ? o : nullptr;
-}
 
 // ---- global queries -----------------------------------------------------
 
@@ -295,8 +242,7 @@ int objHasProperty(lua_State* s) {
 
 int objIsValid(lua_State* s) {
     Wrapper* w = checkWrapper(s, 1);
-    const GameObject* o = wrapperObject(s, w);
-    lua_pushboolean(s, o != nullptr);
+    lua_pushboolean(s, wrapperObjectValid(s, w));
     return 1;
 }
 

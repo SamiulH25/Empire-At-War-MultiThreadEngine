@@ -10,10 +10,12 @@
 // the caller must pump it from a single thread (the sim thread).
 #pragma once
 
+#include "core/event_system.h"
 #include "core/lua_host.h"
 #include "core/meg_manager.h"
 #include "core/object_model.h"
 #include "core/pg_bindings.h"
+#include "core/pg_event_bindings.h"
 #include "core/pg_object_bindings.h"
 
 #include <string>
@@ -32,6 +34,9 @@ public:
     // The sim this manager's scripts query and mutate (object bindings).
     SimState& sim() { return sim_; }
 
+    // The event system (timers, death/attacked/prox callbacks).
+    EventSystem& events() { return events_; }
+
     // Loads and runs a script chunk from the file manager (loose override
     // applies). Scripts typically define functions; they may run top-level
     // code. Throws LuaError on syntax/run error.
@@ -40,8 +45,9 @@ public:
     // Loads a script from a raw chunk string (tests / generated scripts).
     void runScript(const std::string& chunk, const std::string& name = "chunk");
 
-    // Advances engine time by dt and resumes every live script thread once.
-    // Finished threads are removed. Throws LuaError if a thread errors.
+    // Advances engine time by dt, pumps script threads, then processes
+    // event callbacks (timers, deaths, attacked, proximities).
+    // Throws LuaError if a thread or event callback errors.
     void pump(double dt);
 
     // Current engine time (what GetCurrentTime() returns to scripts).
@@ -54,6 +60,7 @@ private:
     MegaFileManager& files_;
     LuaHost host_;
     SimState sim_;
+    EventSystem events_;
     double time_ = 0.0;
 };
 
