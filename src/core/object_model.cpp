@@ -36,6 +36,61 @@ const Player* SimState::findPlayer(const std::string& name) const {
     return nullptr;
 }
 
+// --- economy --------------------------------------------------------------
+
+void SimState::giveMoney(int playerId, double amount) {
+    if (Player* p = player(playerId)) p->credits += amount;
+}
+
+void SimState::setTechLevel(int playerId, int level) {
+    if (Player* p = player(playerId)) p->techLevel = std::max(0, level);
+}
+
+void SimState::unlockType(int playerId, const std::string& typeName) {
+    Player* p = player(playerId);
+    if (!p) return;
+    p->lockedTypes.erase(
+        std::remove(p->lockedTypes.begin(), p->lockedTypes.end(), typeName),
+        p->lockedTypes.end());
+}
+
+void SimState::lockType(int playerId, const std::string& typeName) {
+    Player* p = player(playerId);
+    if (!p) return;
+    if (std::find(p->lockedTypes.begin(), p->lockedTypes.end(), typeName) ==
+        p->lockedTypes.end()) {
+        p->lockedTypes.push_back(typeName);
+    }
+}
+
+bool SimState::canBuild(int playerId, const std::string& typeName) const {
+    const Player* p = player(playerId);
+    const ObjectType* t = type(typeName);
+    if (!p || !t) return false;
+    if (t->techLevel > p->techLevel) return false;
+    if (std::find(p->lockedTypes.begin(), p->lockedTypes.end(), typeName) !=
+        p->lockedTypes.end()) {
+        return false;
+    }
+    return true;
+}
+
+bool SimState::canAfford(int playerId, const std::string& typeName) const {
+    const Player* p = player(playerId);
+    const ObjectType* t = type(typeName);
+    if (!p || !t) return false;
+    return p->credits >= t->buildCost;
+}
+
+int SimState::buildUnit(int playerId, const std::string& typeName, const Vec3& pos) {
+    const ObjectType* t = type(typeName);
+    Player* p = player(playerId);
+    if (!t || !p) return 0;
+    if (!canBuild(playerId, typeName) || p->credits < t->buildCost) return 0;
+    p->credits -= t->buildCost;
+    return spawnUnit(typeName, playerId, pos);
+}
+
 // --- diplomacy ------------------------------------------------------------
 
 void SimState::makeAlly(int a, int b) {

@@ -17,6 +17,9 @@ namespace eaw {
 
 namespace {
 
+// Forward declaration (defined in the type-methods section below).
+const char* typeNameFromId(lua_State* s, Wrapper* w);
+
 // ---- global queries -----------------------------------------------------
 
 int findPlayer(lua_State* s) {
@@ -359,6 +362,53 @@ int playerGetCredits(lua_State* s) {
     if (!p) { lua_pushnil(s); return 1; }
     lua_pushnumber(s, p->credits);
     return 1;
+}
+
+// ---- economy (player methods) --------------------------------------------
+
+int playerGiveMoney(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    double amount = luaL_checknumber(s, 2);
+    w->sim->giveMoney(w->id, amount);
+    return 0;
+}
+
+int playerSetTechLevel(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    int level = static_cast<int>(luaL_checkinteger(s, 2));
+    w->sim->setTechLevel(w->id, level);
+    return 0;
+}
+
+int playerUnlockTech(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    // Arg 2 may be a type wrapper or a type name.
+    if (lua_isuserdata(s, 2)) {
+        Wrapper* t = checkWrapper(s, 2);
+        const char* n = typeNameFromId(s, t);
+        if (n) {
+            w->sim->unlockType(w->id, n);
+            lua_pop(s, 2);
+        }
+    } else {
+        w->sim->unlockType(w->id, luaL_checkstring(s, 2));
+    }
+    return 0;
+}
+
+int playerLockTech(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (lua_isuserdata(s, 2)) {
+        Wrapper* t = checkWrapper(s, 2);
+        const char* n = typeNameFromId(s, t);
+        if (n) {
+            w->sim->lockType(w->id, n);
+            lua_pop(s, 2);
+        }
+    } else {
+        w->sim->lockType(w->id, luaL_checkstring(s, 2));
+    }
+    return 0;
 }
 
 // ---- diplomacy (player methods) ------------------------------------------
@@ -817,6 +867,10 @@ const MethodEntry kPlayerMethods[] = {
     {"Is_Ally", playerIsAlly},
     {"Is_Enemy", playerIsEnemy},
     {"Get_Enemy", playerGetEnemy},
+    {"Give_Money", playerGiveMoney},
+    {"Set_Tech_Level", playerSetTechLevel},
+    {"Unlock_Tech", playerUnlockTech},
+    {"Lock_Tech", playerLockTech},
 };
 
 const MethodEntry kTypeMethods[] = {

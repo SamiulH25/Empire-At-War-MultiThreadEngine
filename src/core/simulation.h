@@ -58,6 +58,12 @@ public:
     // ("" = built-in default).
     void setAiAttackEquation(const std::string& eq) { aiEquation_ = eq; }
 
+    // Sets the type names the AI builds for its taskforces (in preference
+    // order). Empty = the AI builds nothing.
+    void setAiBuildTypes(const std::vector<std::string>& types) {
+        aiBuildTypes_ = types;
+    }
+
     // Number of hyperspace arrivals completed (for tests/telemetry).
     unsigned long long transitArrivals() const { return transitArrivals_; }
 
@@ -87,6 +93,7 @@ private:
     void runCombat(double dt);
     void stepPathfinding();
     void stepGalactic(double dt);
+    void stepEconomy(double dt);
 
     MegaFileManager files_;
     ScriptManager scripts_;
@@ -103,6 +110,7 @@ private:
     std::unordered_map<int, Vec3> positions_;
     std::unique_ptr<AiDriver> ai_;
     std::string aiEquation_;
+    std::vector<std::string> aiBuildTypes_;
 };
 
 } // namespace eaw

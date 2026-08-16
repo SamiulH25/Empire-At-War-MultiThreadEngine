@@ -21,6 +21,52 @@ const char* kDefaultAttackEquation = R"(
 
 } // namespace
 
+void AiDriver::produce(SimState& sim, int playerId,
+                       const std::vector<std::string>& buildTypes) {
+    if (buildTypes.empty()) return;
+    const Player* p = sim.player(playerId);
+    if (!p) return;
+    // Spend at most ~20% of current credits per step so production paces
+    // with income instead of dumping everything at once.
+    double budget = p->credits * 0.2;
+    for (const TaskForce* f : sim.forcesOfPlayer(playerId)) {
+        if (f->planResult) continue; // finished plans don't rebuild
+        // Count the force's current roster.
+        int fighters = 0, heavies = 0;
+        for (int uid : f->units) {
+            const GameObject* o = sim.object(uid);
+            if (!o || !o->alive) continue;
+            const ObjectType* t = sim.type(o->typeName);
+            if (!t) continue;
+            bool isHeavy = t->buildCost >= 500.0;
+            if (isHeavy) ++heavies; else ++fighters;
+        }
+        if (fighters >= targetFighters() && heavies >= targetHeavies()) continue;
+        // Try to build the missing class, preferring the first affordable
+        // type in the preference list that fits the gap.
+        bool needHeavy = heavies < targetHeavies();
+        for (const std::string& tn : buildTypes) {
+            const ObjectType* t = sim.type(tn);
+            if (!t || !sim.canBuild(playerId, tn)) continue;
+            bool isHeavy = t->buildCost >= 500.0;
+            if (isHeavy != needHeavy) continue;
+            if (t->buildCost > budget) continue;
+            // Spawn near the force's first unit.
+            Vec3 pos{0, 0, 0};
+            for (int uid : f->units) {
+                const GameObject* o = sim.object(uid);
+                if (o) { pos = o->position; break; }
+            }
+            int nid = sim.buildUnit(playerId, tn, pos);
+            if (nid != 0) {
+                sim.addUnitToForce(f->id, nid);
+                budget -= t->buildCost;
+                break; // one unit per step per force
+            }
+        }
+    }
+}
+
 void AiDriver::runStep(SimState& sim, int playerId, double gameAge,
                        const std::string& equation) {
     // Lazily parse the default equation (cheap, one-time).

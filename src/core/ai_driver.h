@@ -30,6 +30,16 @@ public:
     void runStep(SimState& sim, int playerId, double gameAge,
                  const std::string& equation = "");
 
+    // AI production: each attack-goal taskforce under its target size spends
+    // the player's credits to build its roster. `buildTypes` lists the type
+    // names the AI builds (in order of preference).
+    void produce(SimState& sim, int playerId,
+                 const std::vector<std::string>& buildTypes);
+
+    // Per-force target sizes for production (fighters + vehicles/capitals).
+    static int targetFighters() { return 8; }
+    static int targetHeavies() { return 2; }
+
 private:
     AiTargeting targeting_;
 };

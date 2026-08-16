@@ -166,6 +166,21 @@ void Simulation::loadPerceptions(const std::string& xmlText) {
     perceptions_.loadEquations(xmlText);
 }
 
+void Simulation::stepEconomy(double dt) {
+    // Income: every player accrues credits per second.
+    for (const Player& p : sim().allPlayers()) {
+        if (Player* pp = sim().player(p.id)) {
+            pp->credits += pp->incomePerSecond * dt;
+        }
+    }
+    // AI production: non-human players build their taskforce rosters.
+    if (ai_ && !aiBuildTypes_.empty()) {
+        for (const Player& p : sim().allPlayers()) {
+            if (!p.human) ai_->produce(sim(), p.id, aiBuildTypes_);
+        }
+    }
+}
+
 void Simulation::tick(double dt) {
     time_ += dt;
     scripts_.pump(dt);
@@ -175,6 +190,7 @@ void Simulation::tick(double dt) {
     for (const auto& p : sim().allPlayers()) {
         if (!p.human) ai_->runStep(sim(), p.id, time_, aiEquation_);
     }
+    stepEconomy(dt);
     stepGalactic(dt);
     snapshotPositions();
     stepPathfinding();

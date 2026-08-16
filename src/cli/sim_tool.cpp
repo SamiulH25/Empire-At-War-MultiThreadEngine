@@ -398,6 +398,10 @@ BattleResult runBattle(const BattleConfig& cfg) {
     orderAttack(sim.scripts(), rebelFighter, rebelCapital,
                 empireFighter, empireCapital);
 
+    // AI production: the empire (non-human) builds its roster over time.
+    sim.setAiBuildTypes({empireFighter, empireCapital});
+    sim.sim().giveMoney(empire.id, 5000.0);
+
     std::printf("  fleets      : %s x%d + %s x%d%s vs %s x%d + %s x%d%s%s\n",
                 rebelFighter.c_str(), cfg.fighters, rebelCapital.c_str(),
                 cfg.capitals,

@@ -157,6 +157,12 @@ add_executable(ai_tests
 target_link_libraries(ai_tests PRIVATE eaw_core)
 add_test(NAME ai_tests COMMAND ai_tests)
 
+add_executable(economy_tests
+    tests/test_economy.cpp
+)
+target_link_libraries(economy_tests PRIVATE eaw_core)
+add_test(NAME economy_tests COMMAND economy_tests)
+
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test
     tests/test_real_lua.cpp

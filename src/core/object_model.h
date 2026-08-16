@@ -69,6 +69,11 @@ struct Player {
     bool human = false;
     int techLevel = 0;
     double credits = 0;
+    // Economy: income per second (tribute/planet output), and the set of
+    // explicitly locked type names (everything else is buildable, matching
+    // the game's tech model where units default to unlocked).
+    double incomePerSecond = 10.0;
+    std::vector<std::string> lockedTypes;
     // Diplomatic relations (Make_Ally / Make_Enemy). Defaults:
     //  - a player is an ally of itself
     //  - all other players are enemies until allied
@@ -142,6 +147,23 @@ public:
     const Player* findPlayer(const std::string& name) const; // by display or faction name
     // All players (for iteration; references valid — deque storage).
     const std::deque<Player>& allPlayers() const { return players_; }
+
+    // --- economy ---
+    // Adds credits to a player (negative = deduct; result may go below 0).
+    void giveMoney(int playerId, double amount);
+    // Sets the player's tech level (0..N).
+    void setTechLevel(int playerId, int level);
+    // Locks/unlocks a type name for a player (everything defaults to
+    // unlocked; locked types are blocked until unlocked again).
+    void lockType(int playerId, const std::string& typeName);
+    void unlockType(int playerId, const std::string& typeName);
+    // True if the player may build the type (not locked and tech sufficient).
+    bool canBuild(int playerId, const std::string& typeName) const;
+    // True if the player has enough credits to build the type.
+    bool canAfford(int playerId, const std::string& typeName) const;
+    // Spends the build cost and spawns the unit at `pos` for the player.
+    // Returns the new object id (0 if not affordable/buildable).
+    int buildUnit(int playerId, const std::string& typeName, const Vec3& pos);
 
     // --- diplomacy ---
     // Makes `a` and `b` allies (symmetric; each stays allied to itself).
