@@ -1,6 +1,6 @@
 # 07 — Toolchain: Native Windows (primary) + Optional Linux Native Build
 
-**Status:** Initial assessment — setup instructions pending
+**Status:** Windows toolchain installed and verified (2026-08-16)
 **Last updated:** 2026-08-16
 
 ## Goal
@@ -13,14 +13,28 @@ portable so Linux can run headless sim/meg tooling natively.
 
 ## Current Windows Host State
 
-| Tool | Status |
-|---|---|
-| Git | Installed (repo cloned) |
-| Python 3 + pefile | Installed |
-| MinGW-w64 (WinLibs) | Installed — used to build the proxy DLL (naked stubs) |
-| CMake + Ninja | Installed |
-| Ghidra / x64dbg / WPR / Process Explorer | Installed (see Phase 0 of the plan) |
-| MSVC | Optional — MinGW output is a plain PE DLL, MSVC not required |
+| Tool | Version | Path |
+|---|---|---|
+| Git | git for Windows | repo cloned at `C:\Dev\Empire-At-War-MultiThreadEngine` |
+| Python | 3.12.10 | `%LOCALAPPDATA%\Programs\Python\Python312\` |
+| pefile | 2024.8.26 | pip-installed into Python312 |
+| MinGW-w64 (WinLibs) | g++ 16.1.0 (UCRT posix-seh) | `%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_...\mingw64\bin` |
+| CMake | 4.4.2 | `C:\Program Files\CMake\bin` |
+| Ninja | 1.13.2 | bundled with WinLibs (mingw64\bin) |
+| JDK | Temurin 21.0.12 (LTS) | `C:\Program Files\Eclipse Adoptium\jdk-21.0.12.8-hotspot` |
+| Ghidra | 12.1.2 PUBLIC (20260605) | `C:\Tools\ghidra` (`support\analyzeHeadless.bat`) |
+| x64dbg | 2026.05.27 snapshot | `C:\Tools\x64dbg\release\x64\x64dbg.exe` |
+| Process Explorer | 17.12 | `C:\Tools\procexp\procexp64.exe` |
+| WPR / WPA | present (OS component) | `C:\Windows\System32\wpr.exe` |
+| MSVC | Optional | — MinGW output is a plain PE DLL, MSVC not required |
+
+Notes:
+- Python, MinGW, CMake, and JDK are on PATH (user or machine). The current shell may
+  need restarting to pick up newly added PATH entries.
+- Ghidra headless requires Java on PATH or `JAVA_HOME` set:
+  `C:\Tools\ghidra\support\analyzeHeadless.bat`.
+- x64dbg and Process Explorer are not on PATH; they're run directly from the paths above.
+- WinLibs bundles `ninja` — a separate Ninja install is unnecessary.
 
 ## Proposed Setup
 
