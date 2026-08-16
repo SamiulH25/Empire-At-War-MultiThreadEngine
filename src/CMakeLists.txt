@@ -23,6 +23,7 @@ add_library(eaw_core STATIC
     core/game_constants.cpp
     core/job_system.cpp
     core/lua_host.cpp
+    core/meg_manager.cpp
 )
 target_include_directories(eaw_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(eaw_core PUBLIC cxx_std_20)
@@ -46,6 +47,12 @@ add_executable(meg_tests
 )
 target_link_libraries(meg_tests PRIVATE eaw_core)
 add_test(NAME meg_tests COMMAND meg_tests)
+
+add_executable(meg_manager_tests
+    tests/test_meg_manager.cpp
+)
+target_link_libraries(meg_manager_tests PRIVATE eaw_core)
+add_test(NAME meg_manager_tests COMMAND meg_manager_tests)
 
 add_executable(xml_tests
     tests/test_xml.cpp
