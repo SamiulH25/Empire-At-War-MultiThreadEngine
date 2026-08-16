@@ -31,8 +31,9 @@ public:
     JobSystem& jobs() { return jobs_; }
 
     // Advances the sim by dt seconds: time += dt, pump scripts, then run the
-    // parallel object update (per-object slices on the worker pool).
-    // Throws LuaError if a script thread errors.
+    // parallel object update (per-object slices on the worker pool) and the
+    // two-phase parallel combat pass. Throws LuaError if a script thread
+    // errors.
     void tick(double dt);
 
     // Current game time in seconds.
@@ -41,14 +42,19 @@ public:
     // How many ticks ran the parallel object update.
     unsigned long long updateTicks() const { return updateTicks_; }
 
+    // Total shots fired by the combat pass (for tests/telemetry).
+    unsigned long long totalShots() const { return totalShots_; }
+
 private:
     void updateObjects(double dt);
+    void runCombat(double dt);
 
     MegaFileManager files_;
     ScriptManager scripts_;
     JobSystem jobs_;
     double time_ = 0.0;
     unsigned long long updateTicks_ = 0;
+    unsigned long long totalShots_ = 0;
 };
 
 } // namespace eaw

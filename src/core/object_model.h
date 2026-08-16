@@ -37,6 +37,12 @@ struct ObjectType {
     double buildCost = 0;
     int techLevel = 0;
     double maxRange = 0, minRange = 0;
+    // Combat stats (modeled from the XML combat surface: weapon damage is
+    // per-shot, attack rate is shots per second).
+    double damage = 0.0;         // per-shot damage (fraction of target hull)
+    double attackRate = 1.0;     // shots per second
+    double shieldDamageMultiplier = 1.0; // damage vs shields
+    double hullDamageMultiplier = 1.0;   // damage vs hull
     // Category membership (Is_Category); pipe-separated in XML like "Frigate | Capital".
     std::vector<std::string> categories;
     // Property flags (Has_Property): "Unit", "Structure", "Hero", ...
@@ -77,6 +83,10 @@ struct GameObject {
     bool hasMoveTarget = false;
     Vec3 moveTarget;               // set by Move_To; sim integrates toward it
     double moveSpeed = 50.0;       // units per second
+    // Combat state.
+    double attackCooldown = 0.0;   // seconds until the next shot is allowed
+    double pendingDamage = 0.0;    // damage accumulated this tick (apply pass)
+    bool wasDamagedThisTick = false; // for the attacked-event edge detection
     std::vector<int> garrisonedUnits; // ids of units inside
 };
 

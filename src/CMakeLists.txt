@@ -109,6 +109,12 @@ add_executable(event_system_tests
 target_link_libraries(event_system_tests PRIVATE eaw_core)
 add_test(NAME event_system_tests COMMAND event_system_tests)
 
+add_executable(combat_tests
+    tests/test_combat.cpp
+)
+target_link_libraries(combat_tests PRIVATE eaw_core)
+add_test(NAME combat_tests COMMAND combat_tests)
+
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test
     tests/test_real_lua.cpp
