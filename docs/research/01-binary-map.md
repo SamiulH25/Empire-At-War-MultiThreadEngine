@@ -222,6 +222,43 @@ manager cluster are the notable users. Whether any of these gates the **sim tick
 didn't show a mutex acquire in the decompile, suggesting the core sim is **not** mutex-
 gated (single-threaded by design).
 
+## Thread Creation Map
+
+**TBB question answered: TBB is NOT in StarWarsG.exe** — no tbbR import and no TBB
+symbols in either exe. TBB lives only in `swfoc.exe` (launcher).
+
+**Thread spawn mechanism:** the engine wraps `_beginthreadex`. All thread creation goes
+through a generic `ThreadClass`-style helper:
+
+| Function | Role |
+|---|---|
+| `FUN_14022e490` | Thread spawner: `_beginthreadex(0, 0, FUN_14022e400, param, 0, 0)`; stores thread handle at param+0x18; waits on flag param+8 |
+| `FUN_14022e400` | Generic thread proc: spins until `param_1+8 != 0` (start signal), then dispatches via vtable `PTR_vftable_140a15598` (a ThreadClass subclass's run method) |
+| `FUN_14022e560` | Thread join/stop helper (called after the load loop) |
+
+**CreateThread / _beginthreadex call sites:**
+
+| Call site | What it spawns |
+|---|---|
+| `FUN_14022e490` | The generic ThreadClass worker (via `_beginthreadex`) — the only direct `_beginthreadex` in the exe |
+| `1407fd380` | CreateThread thunk (import stub) — referenced indirectly |
+| `140bab258` | `_beginthreadex` thunk (import stub) |
+
+**Loading thread (`LoadThread`):**
+
+- `LoadThread` string at VA `0x140805150`, referenced from `FUN_14008df00`
+- `FUN_14008df00` is the **load-thread manager**: constructs a `LoadingThreadClass`
+  (assigns `LoadingThreadClass::vftable`, names it "LoadThread"), spawns it via
+  `FUN_14022e490`, then runs a `while (!done)` loop calling `FUN_14008e9a0()`
+  (loading progress/update) until the flag clears, then `FUN_14022e560` (join)
+- Confirms `LoadingThreadClass` RTTI found in the string census; loading runs on a
+  background thread while the main thread pumps progress
+
+**Net:** the 64-bit exe spawns threads only via this one generic wrapper — the loading
+thread is the confirmed background thread. The main loop (Task 1.4) is otherwise
+single-threaded; the packet handler / manager cluster uses mutexes to protect its own
+state (Task 1.5), not extra threads.
+
 ## Next Steps
 
 1. Full disassembly of `corruption/StarWarsG.exe`
