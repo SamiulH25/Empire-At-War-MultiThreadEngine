@@ -20,11 +20,43 @@
 - DLL characteristics: `0x8160` (ASLR, DEP, NX)
 - Sections: `.text` (0x7fb4b7), `.rdata`, `.data`, `.pdata`, `_RDATA`, `.rsrc`, `.reloc`
 
-## Imports (18 DLLs)
+## Import/Export Tables (from `scripts/pe_deepdive.py`)
 
-SHLWAPI, WINMM, POWRPROF, steam_api64 (11), KERNEL32 (163), USER32 (68), GDI32 (17),
-ADVAPI32, SHELL32, ole32, OLEAUT32, WS2_32 (18), PerceptionFunctionG (10),
-COMCTL32, d3d9 (1), mss64 (38), bink2w64 (11), d3dx9_43 (29)
+Both `StarWarsG.exe` binaries share the identical import surface (18 DLLs):
+
+| DLL | Funcs | Notes |
+|---|---|---|
+| KERNEL32.dll | 163 | incl. `CreateThread`, `TerminateThread`, `SetThreadPriority` (GameData exe) |
+| USER32.dll | 68 | |
+| mss64.dll | 38 | Miles Sound System 64 |
+| d3dx9_43.dll | 29 | D3DX9 helpers |
+| WS2_32.dll | 18 | Winsock2 |
+| GDI32.dll | 17 | |
+| steam_api64.dll | 11 | |
+| PerceptionFunctionG.dll | 10 | `Init_Perception_DLL` + 9 more |
+| bink2w64.dll | 11 | Bink 2 video |
+| ADVAPI32.dll | 8 | |
+| ole32.dll | 4 | |
+| OLEAUT32.dll | 4 | |
+| WINMM.dll | 4 | |
+| SHELL32.dll | 2 | |
+| SHLWAPI.dll | 1 | |
+| COMCTL32.dll | 1 | |
+| POWRPROF.dll | 1 | |
+| **d3d9.dll** | **1** | **`Direct3DCreate9`** — the proxy surface |
+
+`corruption/swfoc.exe` (launcher, 28 DLLs): links **TBB** (`tbbR.dll`, 16 funcs —
+`task_scheduler_init`, `concurrent_queue_base_v3`, `queuing_rw_mutex::scoped_lock`),
+libcurl (`libcurl-x64.dll`, 1 func), WINHTTP (10), MSVCP140/VCRUNTIME (MSVC CRT),
+and statically exports **EASTL** allocator symbols (EASTL is the EA STL replacement).
+TimeDateStamp `1692167365` (Aug 2023) — built before the 2024 remaster exes.
+
+`tbbR.dll` (216 exports) is a full TBB runtime: `task_scheduler_init`,
+`task_arena`, `parallel_pipeline`, spin/queuing/recursive mutexes,
+`concurrent_queue/vector`, `tbb_thread`.
+
+`PerceptionFunctionG.dll` exports: `Init_Perception_DLL` plus the unmangled class
+methods (see Class Map below), ~66 symbols total (corruption build).
 
 ## Threading Evidence Found So Far
 
