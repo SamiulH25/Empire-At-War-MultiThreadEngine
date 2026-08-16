@@ -22,6 +22,7 @@
 #include "core/meg_manager.h"
 #include "core/simulation.h"
 #include "core/unit_data_loader.h"
+#include "core/xml.h"
 
 #include <algorithm>
 #include <chrono>
@@ -132,6 +133,110 @@ void loadModLoose(eaw::MegaFileManager& files, const std::string& modRoot) {
     }
 }
 
+// ---- discovery-driven loading -------------------------------------------
+// The game discovers data through file-list XMLs (megafiles.xml for megas,
+// GameObjectFiles.xml for object/unit files, Factionfiles.xml for factions).
+// Mods add custom files by listing them; we must load whatever the lists
+// name, resolved through loose-override/meg precedence — NOT hardcoded
+// vanilla filenames.
+
+// Parses a file-list XML (<Foo_Files> with <File> children) and returns the
+// listed paths (normalized to DATA/... uppercase).
+std::vector<std::string> readFileList(eaw::MegaFileManager& files,
+                                      const std::string& listPath) {
+    std::vector<std::string> out;
+    if (!files.exists(listPath)) return out;
+    auto bytes = files.read(listPath);
+    try {
+        eaw::XmlNode root = eaw::ParseXml(std::string(bytes.begin(), bytes.end()));
+        for (const eaw::XmlNode& child : root.children) {
+            if (child.name != "File") continue;
+            std::string f = child.text;
+            // Trim whitespace.
+            size_t b = f.find_first_not_of(" \t\r\n");
+            size_t e = f.find_last_not_of(" \t\r\n");
+            if (b == std::string::npos) continue;
+            f = f.substr(b, e - b + 1);
+            std::replace(f.begin(), f.end(), '\\', '/');
+            std::string upper = toUpper(f);
+            // Paths may be "Data\XML\Foo.xml" or bare "Foo.xml" (relative to
+            // the XML dir). Normalize to DATA/XML/... keys.
+            if (upper.rfind("DATA/", 0) == 0) {
+                out.push_back(upper);
+            } else if (upper.rfind("XML/", 0) == 0) {
+                out.push_back("DATA/" + upper);
+            } else {
+                out.push_back("DATA/XML/" + upper);
+            }
+        }
+    } catch (const std::exception&) {
+    }
+    return out;
+}
+
+// Loads the game's data-file lists: megafiles.xml (megs) + GameObjectFiles.xml
+// (object/unit files) + Factionfiles.xml. Returns all named files that resolve.
+std::vector<std::string> discoverDataFiles(eaw::MegaFileManager& files) {
+    std::vector<std::string> out;
+    for (const std::string& list : {"DATA/MEGAFILES.XML", "DATA/XML/GAMEOBJECTFILES.XML",
+                                    "DATA/XML/FACTIONFILES.XML"}) {
+        auto listed = readFileList(files, list);
+        out.insert(out.end(), listed.begin(), listed.end());
+    }
+    // Dedupe, keep order.
+    std::vector<std::string> uniq;
+    std::set<std::string> seen;
+    for (const std::string& f : out) {
+        if (seen.insert(f).second) uniq.push_back(f);
+    }
+    return uniq;
+}
+
+// Loads every combat unit type from the discovered object files (loose wins).
+// Returns the type names in file order.
+std::vector<std::string> loadDiscoveredUnitTypes(eaw::SimState& state,
+                                                 eaw::MegaFileManager& files) {
+    eaw::UnitDataLoader loader;
+    std::vector<eaw::ObjectType> all;
+    auto discovered = discoverDataFiles(files);
+    for (const std::string& f : discovered) {
+        if (!hasSuffix(f, ".xml")) continue;
+        if (!files.exists(f)) continue;
+        auto bytes = files.read(f);
+        try {
+            auto types = loader.loadXml(std::string(bytes.begin(), bytes.end()));
+            all.insert(all.end(), types.begin(), types.end());
+        } catch (const std::exception&) {
+        }
+    }
+    std::vector<std::string> names;
+    for (auto& t : all) {
+        if (t.damage > 0.0 && t.maxRange > 0.0) {
+            names.push_back(t.name);
+            state.addType(std::move(t));
+        }
+    }
+    return names;
+}
+
+// Loads every planet from the discovered planet files.
+std::vector<eaw::Planet> loadDiscoveredPlanets(eaw::MegaFileManager& files) {
+    eaw::UnitDataLoader loader;
+    std::vector<eaw::Planet> out;
+    auto discovered = discoverDataFiles(files);
+    for (const std::string& f : discovered) {
+        if (!hasSuffix(f, ".xml")) continue;
+        if (!files.exists(f)) continue;
+        auto bytes = files.read(f);
+        try {
+            auto planets = loader.loadPlanets(std::string(bytes.begin(), bytes.end()));
+            out.insert(out.end(), planets.begin(), planets.end());
+        } catch (const std::exception&) {
+        }
+    }
+    return out;
+}
+
 // ---- scan ---------------------------------------------------------------
 
 int cmdScan(const std::string& modRoot, const std::string& gameRoot) {
@@ -173,57 +278,6 @@ struct BattleConfig {
     bool land = false;
 };
 
-void addType(eaw::SimState& state, const std::string& name, double dmg,
-             double rate, double range, double cost) {
-    eaw::ObjectType t;
-    t.name = name;
-    t.properties = {"Unit"};
-    t.damage = dmg;
-    t.attackRate = rate;
-    t.maxRange = range;
-    t.buildCost = cost;
-    state.addType(std::move(t));
-}
-
-// Loads every combat unit type visible to the mod (loose overrides win).
-std::vector<std::string> loadModUnitTypes(eaw::SimState& state,
-                                          eaw::MegaFileManager& files,
-                                          bool land) {
-    eaw::UnitDataLoader loader;
-    std::vector<eaw::ObjectType> all;
-    std::vector<std::string> unitFiles;
-    if (land) {
-        unitFiles = {"DATA/XML/UNITS_LAND_EMPIRE_DARKTROOPERS.XML",
-                     "DATA/XML/UNITS_LAND_EMPIRE_JUGGERNAUT.XML",
-                     "DATA/XML/MOBILE_DEFENSE_UNITS.XML",
-                     "DATA/XML/TRANSPORTUNITS.XML"};
-    } else {
-        unitFiles = {"DATA/XML/SPACEUNITSFIGHTERS.XML",
-                     "DATA/XML/SPACEUNITSCAPITAL.XML",
-                     "DATA/XML/SPACEUNITSCORVETTES.XML",
-                     "DATA/XML/SPACEUNITSFRIGATES.XML",
-                     "DATA/XML/SPACEUNITSSUPERS.XML"};
-    }
-    for (const std::string& f : unitFiles) {
-        if (!files.exists(f)) continue;
-        std::vector<uint8_t> bytes = files.read(f);
-        std::string text(bytes.begin(), bytes.end());
-        try {
-            auto types = loader.loadXml(text);
-            all.insert(all.end(), types.begin(), types.end());
-        } catch (const std::exception&) {
-        }
-    }
-    std::vector<std::string> names;
-    for (auto& t : all) {
-        if (t.damage > 0.0 && t.maxRange > 0.0) {
-            names.push_back(t.name);
-            state.addType(std::move(t));
-        }
-    }
-    return names;
-}
-
 // Picks two distinct combat types per side (fallback: by category).
 std::string pickType(eaw::SimState& state, const std::vector<std::string>& names,
                      const std::set<std::string>& used) {
@@ -249,7 +303,8 @@ int cmdBattle(const std::string& modRoot, const std::string& gameRoot,
     eaw::Player& empire = state.addPlayer("Galactic Empire", "EMPIRE");
     rebel.human = true;
 
-    std::vector<std::string> names = loadModUnitTypes(state, files, cfg.land);
+    // Discovery-driven: load whatever the mod's file lists name.
+    std::vector<std::string> names = loadDiscoveredUnitTypes(state, files);
     std::printf("combat types loaded: %zu\n", names.size());
     if (names.empty()) {
         std::fprintf(stderr, "no combat units found — is the mod data present?\n");
@@ -350,17 +405,12 @@ int cmdGalaxy(const std::string& modRoot, const std::string& gameRoot) {
     eaw::Player& pirate = state.addPlayer("Pirate Factions", "UNDERWORLD");
     rebel.human = true; // only the empire plays AI here
 
-    // Planets from the mod (or base game fallback).
-    eaw::UnitDataLoader loader;
+    // Planets from the mod's discovered planet files (loose wins).
     int planets = 0;
-    if (files.exists("DATA/XML/PLANETS.XML")) {
-        auto bytes = files.read("DATA/XML/PLANETS.XML");
-        auto planetList = loader.loadPlanets(std::string(bytes.begin(), bytes.end()));
-        for (auto& p : planetList) {
-            // Credit value drives income: planets contribute to their owner.
-            state.addPlanet(p.name, "", p.position);
-            ++planets;
-        }
+    auto planetList = loadDiscoveredPlanets(files);
+    for (auto& p : planetList) {
+        state.addPlanet(p.name, "", p.position);
+        ++planets;
     }
     std::printf("planets loaded: %d\n", planets);
     if (planets == 0) {
@@ -368,8 +418,8 @@ int cmdGalaxy(const std::string& modRoot, const std::string& gameRoot) {
         return 1;
     }
 
-    // Combat units for the fleets (mod's unit XML).
-    std::vector<std::string> names = loadModUnitTypes(state, files, false);
+    // Combat units for the fleets (mod's discovered unit files).
+    std::vector<std::string> names = loadDiscoveredUnitTypes(state, files);
     std::printf("combat types loaded: %zu\n", names.size());
     std::string light = pickType(state, names, {});
     if (light.empty()) light = "X-Wing";

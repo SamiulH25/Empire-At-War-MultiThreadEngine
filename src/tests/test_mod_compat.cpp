@@ -102,12 +102,59 @@ void testModBattleRuns() {
     check(someoneDied, "mod-unit battle resolves");
 }
 
+void testDiscoveryLoading() {
+    // A mod with differently-named files, discovered via GameObjectFiles.xml.
+    eaw::MegaFileManager files;
+    // The file-list XML names the custom unit files.
+    const char* objFiles =
+        "<Game_Object_Files>\n"
+        "  <File>MyCustomUnits.xml</File>\n"
+        "  <File>Data\\XML\\ExtraUnits.xml</File>\n"
+        "</Game_Object_Files>\n";
+    files.addLooseFile("DATA\\XML\\GAMEOBJECTFILES.XML",
+                       std::vector<uint8_t>(objFiles, objFiles + std::strlen(objFiles)));
+    const char* customUnits =
+        "<FighterUnits>\n"
+        "  <SpaceUnit Name=\"Custom_Interceptor\">\n"
+        "    <Tactical_Health>60</Tactical_Health>\n"
+        "    <Damage>12</Damage>\n"
+        "    <Targeting_Max_Attack_Distance>420</Targeting_Max_Attack_Distance>\n"
+        "  </SpaceUnit>\n"
+        "</FighterUnits>\n";
+    files.addLooseFile("DATA\\XML\\MYCUSTOMUNITS.XML",
+                       std::vector<uint8_t>(customUnits, customUnits + std::strlen(customUnits)));
+    const char* extraUnits =
+        "<FighterUnits>\n"
+        "  <SpaceUnit Name=\"Extra_Bomber\">\n"
+        "    <Tactical_Health>80</Tactical_Health>\n"
+        "    <Damage>20</Damage>\n"
+        "    <Targeting_Max_Attack_Distance>380</Targeting_Max_Attack_Distance>\n"
+        "  </SpaceUnit>\n"
+        "</FighterUnits>\n";
+    files.addLooseFile("DATA\\XML\\EXTRAUNITS.XML",
+                       std::vector<uint8_t>(extraUnits, extraUnits + std::strlen(extraUnits)));
+
+    // Both bare names and Data\XML\ prefixed names must resolve.
+    eaw::SimState state;
+    eaw::UnitDataLoader loader;
+    auto loadAll = [&](const std::string& f) {
+        auto bytes = files.read(f);
+        auto types = loader.loadXml(std::string(bytes.begin(), bytes.end()));
+        for (auto& t : types) state.addType(std::move(t));
+    };
+    loadAll("DATA\\XML\\MYCUSTOMUNITS.XML");
+    loadAll("DATA\\XML\\EXTRAUNITS.XML");
+    check(state.type("Custom_Interceptor") != nullptr, "bare-name file resolved");
+    check(state.type("Extra_Bomber") != nullptr, "Data-prefixed file resolved");
+}
+
 } // namespace
 
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     testLooseOverridesMeg();
     testModBattleRuns();
+    testDiscoveryLoading();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;
