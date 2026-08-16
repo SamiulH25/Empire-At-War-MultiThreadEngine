@@ -175,10 +175,39 @@ void Simulation::tick(double dt) {
     for (const auto& p : sim().allPlayers()) {
         if (!p.human) ai_->runStep(sim(), p.id, time_, aiEquation_);
     }
+    stepGalactic(dt);
     snapshotPositions();
     stepPathfinding();
     updateObjects(dt);
     runCombat(dt);
+}
+
+void Simulation::stepGalactic(double dt) {
+    // Advance hyperspace transits; complete arrivals.
+    std::vector<int> arrived;
+    for (const TaskForce& f : sim().forces()) {
+        TaskForce* tf = sim().taskForce(f.id);
+        if (!tf || !tf->inTransit) continue;
+        tf->elapsedSeconds += dt;
+        if (tf->elapsedSeconds >= tf->travelSeconds) {
+            arrived.push_back(tf->id);
+        }
+    }
+    for (int fid : arrived) {
+        TaskForce* tf = sim().taskForce(fid);
+        const Planet* dest = sim().planet(tf->toPlanetId);
+        tf->inTransit = false;
+        tf->planetId = tf->toPlanetId;
+        tf->fromPlanetId = tf->toPlanetId;
+        for (int uid : tf->units) {
+            GameObject* o = sim().object(uid);
+            if (o) {
+                o->hidden = false;
+                if (dest) o->position = dest->position;
+            }
+        }
+        ++transitArrivals_;
+    }
 }
 
 void Simulation::snapshotPositions() {

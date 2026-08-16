@@ -313,4 +313,41 @@ int SimState::forcePlanet(int forceId) const {
     return f ? f->planetId : -1;
 }
 
+bool SimState::startTransit(int forceId, int toPlanetId) {
+    TaskForce* f = taskForce(forceId);
+    if (!f || f->inTransit) return false;
+    const Planet* from = planet(f->planetId);
+    const Planet* to = planet(toPlanetId);
+    if (!from || !to || from->id == to->id) return false;
+    f->inTransit = true;
+    f->fromPlanetId = f->planetId;
+    f->toPlanetId = toPlanetId;
+    // Hyperspace speed: 1 unit of distance per second (tunable constant).
+    double dist = from->position.distanceTo(to->position);
+    f->travelSeconds = std::max(1.0, dist);
+    f->elapsedSeconds = 0.0;
+    // Units leave their visible position (go "into hyperspace").
+    for (int uid : f->units) {
+        GameObject* o = object(uid);
+        if (o) o->hidden = true;
+    }
+    return true;
+}
+
+bool SimState::forceInTransit(int forceId) const {
+    const TaskForce* f = taskForce(forceId);
+    return f && f->inTransit;
+}
+
+int SimState::forceTransitTarget(int forceId) const {
+    const TaskForce* f = taskForce(forceId);
+    return (f && f->inTransit) ? f->toPlanetId : -1;
+}
+
+double SimState::forceTransitProgress(int forceId) const {
+    const TaskForce* f = taskForce(forceId);
+    if (!f || !f->inTransit || f->travelSeconds <= 0) return 0.0;
+    return std::min(1.0, f->elapsedSeconds / f->travelSeconds);
+}
+
 } // namespace eaw

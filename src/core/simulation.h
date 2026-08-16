@@ -58,6 +58,9 @@ public:
     // ("" = built-in default).
     void setAiAttackEquation(const std::string& eq) { aiEquation_ = eq; }
 
+    // Number of hyperspace arrivals completed (for tests/telemetry).
+    unsigned long long transitArrivals() const { return transitArrivals_; }
+
     // Advances the sim by dt seconds: time += dt, pump scripts, then run the
     // parallel object update (per-object slices on the worker pool), the
     // two-phase parallel combat pass, and the pathfinding step.
@@ -83,6 +86,7 @@ private:
     void updateObjects(double dt);
     void runCombat(double dt);
     void stepPathfinding();
+    void stepGalactic(double dt);
 
     MegaFileManager files_;
     ScriptManager scripts_;
@@ -95,6 +99,7 @@ private:
     double time_ = 0.0;
     unsigned long long updateTicks_ = 0;
     unsigned long long totalShots_ = 0;
+    unsigned long long transitArrivals_ = 0;
     std::unordered_map<int, Vec3> positions_;
     std::unique_ptr<AiDriver> ai_;
     std::string aiEquation_;

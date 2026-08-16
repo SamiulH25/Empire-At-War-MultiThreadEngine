@@ -125,6 +125,12 @@ struct TaskForce {
     bool goalSystemRemovable = true;
     int planetId = -1;         // galactic mode: planet the force is at (-1 none)
     std::vector<int> units;    // object ids in the force
+    // Hyperspace transit (galactic mode).
+    bool inTransit = false;
+    int fromPlanetId = -1;
+    int toPlanetId = -1;
+    double travelSeconds = 0;  // total trip duration
+    double elapsedSeconds = 0; // time since departure
 };
 
 class SimState {
@@ -186,6 +192,8 @@ public:
     int addTaskForce(int playerId, const std::string& name);
     const TaskForce* taskForce(int id) const;
     TaskForce* taskForce(int id);
+    // All taskforces (for iteration; references valid — deque storage).
+    const std::deque<TaskForce>& forces() const { return forces_; }
     // Adds a unit to the force (idempotent). Returns false if either is
     // invalid.
     bool addUnitToForce(int forceId, int unitId);
@@ -206,6 +214,16 @@ public:
     // The planet a taskforce is currently assigned to (by name lookup of the
     // force's planetId; -1 if none).
     int forcePlanet(int forceId) const;
+    // Starts hyperspace transit for a force to `toPlanetId`. Travel time is
+    // derived from the planet distance (a fixed hyperspace speed). Returns
+    // false if either planet is unknown or the force is already in transit.
+    bool startTransit(int forceId, int toPlanetId);
+    // True if the force is currently in hyperspace.
+    bool forceInTransit(int forceId) const;
+    // The destination planet of a force in transit (-1 if not in transit).
+    int forceTransitTarget(int forceId) const;
+    // Fraction of the trip completed (0..1); 0 if not in transit.
+    double forceTransitProgress(int forceId) const;
 
     int nextObjectId() const { return nextObjectId_; }
 

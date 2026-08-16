@@ -220,7 +220,7 @@ void testGalacticMode() {
     TfFixture fx;
     fx.addFightersToForce();
     eaw::SimState& state = fx.sim->sim();
-    // Two planets.
+    // Two planets 500 units apart -> ~500s travel at speed 1.
     int tatooine = state.addPlanet("Tatooine", "EMPIRE", {0, 0, 0});
     int endor = state.addPlanet("Endor", "REBEL", {500, 0, 0});
     check(state.planet(tatooine) != nullptr && state.planet(endor) != nullptr,
@@ -228,6 +228,9 @@ void testGalacticMode() {
     check(state.findPlanet("Tatooine") != nullptr, "findPlanet by name");
     check(state.findPlanet("Nope") == nullptr, "findPlanet unknown returns null");
     check(state.forcePlanet(fx.forceId) == -1, "force starts at no planet");
+    // Assign the force to its origin planet (as force assembly would).
+    state.taskForce(fx.forceId)->planetId = tatooine;
+    check(state.forcePlanet(fx.forceId) == tatooine, "force assigned to origin");
 
     {
         lua_State* s = fx.sim->scripts().state();
@@ -239,9 +242,7 @@ void testGalacticMode() {
         "name = p:Get_Name()\n"
         "owner = p:Get_Owner()\n"
         "owner_name = owner:Get_Faction_Name()\n"
-        "force:Move_To(p)\n"
-        "fp = force:Get_Planet()\n"
-        "fp_name = fp:Get_Name()\n");
+        "force:Move_To(p)\n");
     lua_getglobal(fx.sim->scripts().state(), "name");
     check(std::string(lua_tostring(fx.sim->scripts().state(), -1)) == "Endor",
           "FindPlanet + Get_Name");
@@ -250,14 +251,26 @@ void testGalacticMode() {
     check(std::string(lua_tostring(fx.sim->scripts().state(), -1)) == "REBEL",
           "planet owner faction");
     lua_pop(fx.sim->scripts().state(), 1);
-    lua_getglobal(fx.sim->scripts().state(), "fp_name");
-    check(std::string(lua_tostring(fx.sim->scripts().state(), -1)) == "Endor",
-          "force moved to planet");
-    lua_pop(fx.sim->scripts().state(), 1);
-    check(state.forcePlanet(fx.forceId) == endor, "force planet id updated");
-    // Units teleported to the planet.
+    // Force is now IN TRANSIT, not arrived.
+    check(state.forceInTransit(fx.forceId), "force is in hyperspace");
+    check(state.forceTransitTarget(fx.forceId) == endor, "transit destination");
+    check(state.forcePlanet(fx.forceId) == tatooine, "force still at origin");
+    // Units hidden during transit.
     for (const eaw::GameObject* o : state.objectsOfType("X_WING")) {
-        check(o->position.x == 500.0, "units teleported to planet");
+        check(o->hidden, "units hidden in hyperspace");
+    }
+    // Progress grows over time.
+    fx.sim->tick(100.0);
+    double p1 = state.forceTransitProgress(fx.forceId);
+    check(p1 > 0.0 && p1 < 1.0, "transit in progress");
+    // Tick past the arrival.
+    fx.sim->tick(500.0);
+    check(!state.forceInTransit(fx.forceId), "force arrived");
+    check(state.forcePlanet(fx.forceId) == endor, "force now at destination");
+    check(fx.sim->transitArrivals() == 1, "arrival counted");
+    for (const eaw::GameObject* o : state.objectsOfType("X_WING")) {
+        check(!o->hidden, "units visible after arrival");
+        check(o->position.x == 500.0, "units at destination planet");
     }
 }
 

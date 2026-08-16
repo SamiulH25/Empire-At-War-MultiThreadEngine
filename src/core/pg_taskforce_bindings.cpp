@@ -180,17 +180,13 @@ int tfMoveTo(lua_State* s) {
     Wrapper* w = checkWrapper(s, 1);
     TaskForce* f = w->sim->taskForce(w->id);
     if (!f) { lua_pushnil(s); return 1; }
-    // Galactic mode: moving to a planet relocates the force there.
+    // Galactic mode: moving to a planet starts hyperspace transit (the sim
+    // completes it after the travel time derived from the planet distance).
     if (lua_isuserdata(s, 2)) {
         Wrapper* t = checkWrapper(s, 2);
         if (t->kind == WrapperKind::Planet) {
-            const Planet* p = w->sim->planet(t->id);
-            if (!p) { lua_pushnil(s); return 1; }
-            f->planetId = p->id;
-            for (int id : f->units) {
-                GameObject* o = w->sim->object(id);
-                if (o) o->position = p->position;
-            }
+            bool ok = w->sim->startTransit(f->id, t->id);
+            if (!ok) { lua_pushnil(s); return 1; }
             pushCommandBlock(s, w->sim, 0);
             return 1;
         }
