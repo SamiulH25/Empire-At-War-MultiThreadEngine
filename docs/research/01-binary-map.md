@@ -182,6 +182,46 @@ Notes:
   short path (`C:\PROGRA~2\...`) if the game is under `Program Files (x86)`.
 - Recreate anytime with the two commands above (or the equivalent `-import` calls).
 
+## ThreadLockMutexClass Map
+
+Found via xrefs to the error string at VA `0x140851bf0` (`ThreadLockMutexClass -- %s failed
+to obtain mutex within 10 seconds (current owner is %s)`).
+
+**Underlying primitive: Windows mutex** (`CreateMutex`-based). `Acquire` uses
+`WaitForSingleObject(handle, 10000)` — the 10-second timeout — and the error path calls
+`GetLastError` + prints owner info; `Release` calls `ReleaseMutex`.
+
+| Method | Address | Behavior |
+|---|---|---|
+| `Acquire` (timeout) | `FUN_140206940` | `WaitForSingleObject(h, 10000)`; on timeout prints "failed to obtain mutex within 10 seconds (current owner is %s)"; calls `GetLastError` |
+| `Release` | (within Acquire's error path) | `ReleaseMutex(h)`; on failure prints `ReleaseMutex failed with error code %d - %s (mutex owner is %s)` |
+
+**Call sites** (functions that take the mutex — the error string is referenced wherever
+the mutex is acquired):
+
+| Call site | Likely purpose (from decompile) |
+|---|---|
+| `FUN_140206940` | The Acquire method itself |
+| `FUN_1402062b0` | `PacketHandlerClass::Send_Raw_Packet` — guards the network send path |
+| `FUN_140205870` | (network cluster) — packet handling |
+| `FUN_1402059f0` | (network cluster) — packet handling |
+| `FUN_14033a200` | Manager shutdown/cleanup (checks flag at +0x150, posts events) |
+| `FUN_140339bc0` | Manager update (iterates lists, DWORD counters) |
+| `FUN_140339190` | Manager method |
+| `FUN_140336a50` | Manager method |
+| `FUN_140336d50` | Manager method |
+| `FUN_1403360b0` | Manager method |
+| `FUN_1403362d0` | Manager method |
+| `FUN_1403365c0` | Manager method |
+| `FUN_140335830` | Manager method (referenced twice) |
+
+The mutex class is used per-manager (each manager holds a `ThreadLockMutexClass` member
+and acquires it to guard its own data). The packet handler and the `14033xxxx`/`140336xxx`
+manager cluster are the notable users. Whether any of these gates the **sim tick**
+(Task 1.4's `FUN_14025ca30`) is not yet confirmed — the sim tick's six object lists
+didn't show a mutex acquire in the decompile, suggesting the core sim is **not** mutex-
+gated (single-threaded by design).
+
 ## Next Steps
 
 1. Full disassembly of `corruption/StarWarsG.exe`
