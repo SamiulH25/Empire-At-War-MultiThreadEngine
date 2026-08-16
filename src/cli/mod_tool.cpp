@@ -17,6 +17,7 @@
 //       Scans the mod's Lua scripts for engine binding calls (the PG*
 //       surface), lists which registered bindings they use and which
 //       documented bindings are still missing from the engine.
+#include "core/lua_wrappers.h"
 #include "core/meg_file.h"
 #include "core/meg_manager.h"
 #include "core/simulation.h"
@@ -331,6 +332,151 @@ int cmdBattle(const std::string& modRoot, const std::string& gameRoot,
     return 0;
 }
 
+// ---- galaxy --------------------------------------------------------------
+
+// Simulates the galactic layer: planets from the mod's PLANETS.XML, faction
+// home worlds, AI fleets producing + moving between planets via hyperspace.
+int cmdGalaxy(const std::string& modRoot, const std::string& gameRoot) {
+    eaw::MegaFileManager files;
+    std::vector<std::vector<uint8_t>> archiveBytes;
+    std::vector<eaw::MegFile> megas;
+    loadBaseMegas(files, gameRoot, archiveBytes, megas);
+    loadModLoose(files, modRoot);
+
+    eaw::Simulation sim(4);
+    eaw::SimState& state = sim.sim();
+    eaw::Player& rebel = state.addPlayer("Rebel Alliance", "REBEL");
+    eaw::Player& empire = state.addPlayer("Galactic Empire", "EMPIRE");
+    eaw::Player& pirate = state.addPlayer("Pirate Factions", "UNDERWORLD");
+    rebel.human = true; // only the empire plays AI here
+
+    // Planets from the mod (or base game fallback).
+    eaw::UnitDataLoader loader;
+    int planets = 0;
+    if (files.exists("DATA/XML/PLANETS.XML")) {
+        auto bytes = files.read("DATA/XML/PLANETS.XML");
+        auto planetList = loader.loadPlanets(std::string(bytes.begin(), bytes.end()));
+        for (auto& p : planetList) {
+            // Credit value drives income: planets contribute to their owner.
+            state.addPlanet(p.name, "", p.position);
+            ++planets;
+        }
+    }
+    std::printf("planets loaded: %d\n", planets);
+    if (planets == 0) {
+        std::fprintf(stderr, "no PLANETS.XML found\n");
+        return 1;
+    }
+
+    // Combat units for the fleets (mod's unit XML).
+    std::vector<std::string> names = loadModUnitTypes(state, files, false);
+    std::printf("combat types loaded: %zu\n", names.size());
+    std::string light = pickType(state, names, {});
+    if (light.empty()) light = "X-Wing";
+    std::string heavy = light;
+    for (const std::string& n : names) {
+        const eaw::ObjectType* t = state.type(n);
+        if (t && t->buildCost >= 500.0 && n != light) { heavy = n; break; }
+    }
+
+    // Assign home worlds: skip art/placeholder planets, pick the first real
+    // planets for each faction.
+    auto allPlanets = state.allPlanets();
+    std::string rebelHome, empireHome;
+    for (const eaw::Planet* p : allPlanets) {
+        std::string n = p->name;
+        if (n.find("Art_Model") != std::string::npos) continue;
+        if (n.find("Core") != std::string::npos) continue;
+        if (rebelHome.empty()) rebelHome = n;
+        else { empireHome = n; break; }
+    }
+    if (rebelHome.empty() || empireHome.empty() || rebelHome == empireHome) {
+        std::fprintf(stderr, "could not pick home planets\n");
+        return 1;
+    }
+    int rebelHomeId = state.findPlanet(rebelHome)->id;
+    int empireHomeId = state.findPlanet(empireHome)->id;
+    state.findPlanet(rebelHome)->factionName = "REBEL";
+    state.findPlanet(empireHome)->factionName = "EMPIRE";
+    std::printf("rebel home: %s, empire home: %s\n", rebelHome.c_str(),
+                empireHome.c_str());
+
+    // Income from planets: each owned planet contributes credits/sec.
+    rebel.incomePerSecond = 10.0;
+    empire.incomePerSecond = 10.0;
+    for (const eaw::Planet* p : state.allPlanets()) {
+        if (p->factionName == "REBEL") rebel.incomePerSecond += p->garrisonHull * 0.02;
+        if (p->factionName == "EMPIRE") empire.incomePerSecond += p->garrisonHull * 0.02;
+    }
+
+    // Starting fleets at each home world (AI builds them up via economy).
+    int rebelForce = state.addTaskForce(rebel.id, "AttackPlan");
+    int empireForce = state.addTaskForce(empire.id, "AttackPlan");
+    state.taskForce(rebelForce)->planetId = rebelHomeId;
+    state.taskForce(empireForce)->planetId = empireHomeId;
+    for (int i = 0; i < 4; ++i) {
+        const eaw::Planet* hp = state.planet(rebelHomeId);
+        int u = state.spawnUnit(light, rebel.id, hp->position);
+        state.addUnitToForce(rebelForce, u);
+    }
+    for (int i = 0; i < 4; ++i) {
+        const eaw::Planet* hp = state.planet(empireHomeId);
+        int u = state.spawnUnit(light, empire.id, hp->position);
+        state.addUnitToForce(empireForce, u);
+    }
+    sim.setAiBuildTypes({light, heavy});
+    sim.sim().giveMoney(empire.id, 3000.0);
+    sim.sim().giveMoney(rebel.id, 3000.0);
+
+    // The AI's goal: move the force to the enemy home world (via hyperspace).
+    sim.scripts().runScript(
+        "force = Find_First_Object('X-Wing') and nil\n"); // placeholder no-op
+    // Order the AI (empire) force toward the rebel home via hyperspace.
+    {
+        lua_State* s = sim.scripts().state();
+        eaw::pushWrapper(s, &state, eaw::WrapperKind::TaskForce, empireForce);
+        lua_setglobal(s, "empire_force");
+        eaw::pushWrapper(s, &state, eaw::WrapperKind::Planet,
+                         state.findPlanet(rebelHome)->id);
+        lua_setglobal(s, "rebel_home");
+    }
+    sim.scripts().runScript(
+        "empire_force:Move_To(rebel_home)\n");
+
+    // Run the galactic sim for N ticks; report transits, arrivals, economy.
+    const double dt = 1.0 / 30.0;
+    int ticks = 3600;
+    int arrivals = 0;
+    for (int i = 0; i < ticks; ++i) {
+        sim.tick(dt);
+        if (i % 300 == 0 && i > 0) {
+            std::printf("t=%d  rebel credits=%.0f force=%zu%s  empire credits=%.0f force=%zu%s\n",
+                        i, sim.sim().player(rebel.id)->credits,
+                        sim.sim().taskForce(rebelForce)->units.size(),
+                        sim.sim().forceInTransit(rebelForce) ? " [in transit]" : "",
+                        sim.sim().player(empire.id)->credits,
+                        sim.sim().taskForce(empireForce)->units.size(),
+                        sim.sim().forceInTransit(empireForce) ? " [in transit]" : "");
+        }
+    }
+    arrivals = static_cast<int>(sim.transitArrivals());
+    std::printf("galactic sim complete: %d ticks, %d hyperspace arrivals\n",
+                ticks, arrivals);
+    std::printf("rebel force at %s (%zu units), empire force at %s (%zu units)\n",
+                sim.sim().planet(sim.sim().forcePlanet(rebelForce))
+                    ? sim.sim().planet(sim.sim().forcePlanet(rebelForce))->name.c_str()
+                    : "none",
+                sim.sim().taskForce(rebelForce)->units.size(),
+                sim.sim().planet(sim.sim().forcePlanet(empireForce))
+                    ? sim.sim().planet(sim.sim().forcePlanet(empireForce))->name.c_str()
+                    : "none",
+                sim.sim().taskForce(empireForce)->units.size());
+    std::printf("rebel credits: %.0f, empire credits: %.0f\n",
+                sim.sim().player(rebel.id)->credits,
+                sim.sim().player(empire.id)->credits);
+    return 0;
+}
+
 // ---- bindings -----------------------------------------------------------
 
 // The engine's registered binding names (from pg_bindings + object + event +
@@ -426,6 +572,7 @@ void usage() {
         "  mod_tool battle <mod_dir> [--game <base game dir>]\n"
         "                 [--workers N] [--ticks N] [--fighters N] [--capitals N]\n"
         "                 [--land]\n"
+        "  mod_tool galaxy <mod_dir> [--game <base game dir>]\n"
         "  mod_tool bindings <mod_dir>\n");
 }
 
@@ -454,6 +601,7 @@ int main(int argc, char** argv) {
     }
     if (cmd == "scan") return cmdScan(modRoot, gameRoot);
     if (cmd == "battle") return cmdBattle(modRoot, gameRoot, cfg);
+    if (cmd == "galaxy") return cmdGalaxy(modRoot, gameRoot);
     if (cmd == "bindings") return cmdBindings(modRoot);
     usage();
     return 1;

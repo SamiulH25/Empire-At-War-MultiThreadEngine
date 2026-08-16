@@ -107,4 +107,30 @@ void UnitDataLoader::loadUnitNode(const XmlNode& unit, bool /*space*/,
     out.push_back(std::move(t));
 }
 
+std::vector<Planet> UnitDataLoader::loadPlanets(const std::string& xmlText) {
+    std::vector<Planet> out;
+    XmlNode root = ParseXml(xmlText);
+    // The root is <Planets>; children are <Planet Name="...">.
+    int idx = 0;
+    for (const XmlNode& p : root.children) {
+        if (p.name != "Planet") continue;
+        std::string name = p.attr("Name");
+        if (name.empty()) continue;
+        Planet pl;
+        pl.id = 0; // assigned by SimState::addPlanet
+        pl.name = name;
+        // Credit value -> income contribution (credits/sec scaled down).
+        double creditValue = toDouble(childText(p, "Planet_Credit_Value"));
+        pl.garrisonHull = creditValue;
+        // Position: place planets on a spiral so distance-based transit
+        // times are meaningful (the game's PLANETS.XML has no coordinates).
+        double angle = idx * 2.399963; // golden angle
+        double radius = 200.0 + (idx % 12) * 60.0;
+        pl.position = Vec3{radius * std::cos(angle), radius * std::sin(angle), 0.0};
+        ++idx;
+        out.push_back(std::move(pl));
+    }
+    return out;
+}
+
 } // namespace eaw

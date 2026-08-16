@@ -232,6 +232,7 @@ public:
                   const Vec3& pos);
     const Planet* planet(int id) const;
     const Planet* findPlanet(const std::string& name) const;
+    Planet* findPlanet(const std::string& name);
     std::vector<const Planet*> allPlanets() const;
     // The planet a taskforce is currently assigned to (by name lookup of the
     // force's planetId; -1 if none).

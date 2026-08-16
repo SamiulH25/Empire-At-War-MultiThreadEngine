@@ -33,10 +33,16 @@ namespace eaw {
 
 class UnitDataLoader {
 public:
-    // Parses every <SpaceUnit>/<LandUnit> block from the XML text into
-    // ObjectTypes. Later definitions of the same name replace earlier ones.
-    // Returns the types in document order.
+    // Parses every <SpaceUnit>/<LandUnit>/<GroundVehicle> block from the XML
+    // text into ObjectTypes. Later definitions of the same name replace
+    // earlier ones. Returns the types in document order.
     std::vector<ObjectType> loadXml(const std::string& xmlText);
+
+    // Parses every <Planet Name="..."> block into Planet records.
+    // `creditValue` becomes the planet's income contribution; the position
+    // is derived from the galaxy layout (spiral-ish ring around the origin)
+    // since the game's PLANETS.XML has no coordinates.
+    std::vector<Planet> loadPlanets(const std::string& xmlText);
 
 private:
     void loadUnitNode(const XmlNode& unit, bool space,

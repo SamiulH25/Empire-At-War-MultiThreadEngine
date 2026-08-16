@@ -259,12 +259,12 @@ void testGalacticMode() {
     for (const eaw::GameObject* o : state.objectsOfType("X_WING")) {
         check(o->hidden, "units hidden in hyperspace");
     }
-    // Progress grows over time.
-    fx.sim->tick(100.0);
+    // Progress grows over time (500 units at speed 20 = 25s trip).
+    fx.sim->tick(10.0);
     double p1 = state.forceTransitProgress(fx.forceId);
     check(p1 > 0.0 && p1 < 1.0, "transit in progress");
     // Tick past the arrival.
-    fx.sim->tick(500.0);
+    fx.sim->tick(30.0);
     check(!state.forceInTransit(fx.forceId), "force arrived");
     check(state.forcePlanet(fx.forceId) == endor, "force now at destination");
     check(fx.sim->transitArrivals() == 1, "arrival counted");

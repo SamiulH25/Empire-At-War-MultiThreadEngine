@@ -356,6 +356,13 @@ const Planet* SimState::findPlanet(const std::string& name) const {
     return nullptr;
 }
 
+Planet* SimState::findPlanet(const std::string& name) {
+    for (auto& p : planets_) {
+        if (p.name == name) return &p;
+    }
+    return nullptr;
+}
+
 std::vector<const Planet*> SimState::allPlanets() const {
     std::vector<const Planet*> out;
     out.reserve(planets_.size());
@@ -377,9 +384,11 @@ bool SimState::startTransit(int forceId, int toPlanetId) {
     f->inTransit = true;
     f->fromPlanetId = f->planetId;
     f->toPlanetId = toPlanetId;
-    // Hyperspace speed: 1 unit of distance per second (tunable constant).
+    // Hyperspace speed: 20 units of distance per second (a fleet crosses
+    // the galaxy in seconds, like the game).
+    constexpr double kHyperspaceSpeed = 20.0;
     double dist = from->position.distanceTo(to->position);
-    f->travelSeconds = std::max(1.0, dist);
+    f->travelSeconds = std::max(1.0, dist / kHyperspaceSpeed);
     f->elapsedSeconds = 0.0;
     // Units leave their visible position (go "into hyperspace").
     for (int uid : f->units) {
