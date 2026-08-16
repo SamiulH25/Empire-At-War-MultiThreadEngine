@@ -14,6 +14,14 @@ namespace eaw {
 // The host must outlive the state.
 void registerPgBindings(LuaHost& lua);
 
+// Resumes every live script thread (created by Create_Thread) once, removing
+// finished ones. Called by the engine's per-frame script pump. Throws
+// LuaError if a script thread errors.
+void pumpThreads(lua_State* s);
+
+// Drives the engine time that GetCurrentTime() returns to scripts.
+void setEngineTime(lua_State* s, double t);
+
 // Engine-side state backing the bindings (per-script-manager).
 struct PgBindingsState {
     // Thread model: each created "thread" is a coroutine of the named function.
