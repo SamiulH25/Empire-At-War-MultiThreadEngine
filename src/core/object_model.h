@@ -72,6 +72,8 @@ struct GameObject {
     bool selectable = true;
     bool invulnerable = false;
     bool inGarrison = false;
+    bool ordersLocked = false;
+    int attackTargetId = 0;
     std::vector<int> garrisonedUnits; // ids of units inside
 };
 
@@ -91,6 +93,18 @@ public:
     const GameObject* object(int id) const;
     GameObject* object(int id);
     void removeObject(int id);
+
+    // Spawns a unit of `typeName` for `playerId` near `pos` (respecting a
+    // trivial collision check: if an object occupies the exact spot, offset).
+    // Returns the new object's id.
+    int spawnUnit(const std::string& typeName, int playerId, const Vec3& pos);
+
+    // Garrison `unitId` inside `containerId` (both must exist and be alive).
+    // Returns false if either is invalid.
+    bool garrisonUnit(int unitId, int containerId);
+
+    // Removes `unitId` from its container's garrison list.
+    void ungarrisonUnit(int unitId);
 
     // Queries used by the Lua bindings.
     std::vector<const GameObject*> allObjects() const;

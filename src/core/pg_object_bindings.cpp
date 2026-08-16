@@ -19,14 +19,17 @@ namespace {
 // Each wrapper is userdata containing {kind, id} + a back-pointer to the sim.
 // kinds: 1 = GameObject, 2 = Player, 3 = ObjectType, 4 = Position (id unused)
 
-enum class WrapperKind : int { Object = 1, Player = 2, Type = 3, Position = 4 };
+enum class WrapperKind : int { Object = 1, Player = 2, Type = 3, Position = 4, Command = 5 };
 
 struct Wrapper {
     SimState* sim;
     WrapperKind kind;
     int id;
-    // Position wrappers carry their coords inline.
+    // Position wrappers carry their coords inline; command blocks carry a
+    // result value (0 = nil/false).
     Vec3 pos;
+    double result = 0;
+    bool finished = true;
 };
 
 const char* kWrapperMeta = "LuaWrapperMetaTable";
@@ -63,7 +66,8 @@ void pushObject(lua_State* s, SimState* sim, const GameObject* o) {
 
 const GameObject* wrapperObject(lua_State* s, Wrapper* w) {
     if (w->kind != WrapperKind::Object) return nullptr;
-    return w->sim->object(w->id);
+    const GameObject* o = w->sim->object(w->id);
+    return (o && o->alive) ? o : nullptr;
 }
 
 // ---- global queries -----------------------------------------------------
@@ -508,6 +512,258 @@ int posGetXYZ(lua_State* s) {
     return 3;
 }
 
+// ---- wrapper methods (object actions) ------------------------------------
+// These mutate the sim and return CommandBlock wrappers (or nothing), per the
+// documented API. Positions are the target's position for object targets.
+
+// Pushes a command block wrapper (finished immediately; sim has no async
+// movement yet, but scripts can poll IsFinished/Result).
+void pushCommandBlock(lua_State* s, SimState* sim, double result) {
+    pushWrapper(s, sim, WrapperKind::Command, 0);
+    Wrapper* cw = static_cast<Wrapper*>(lua_touserdata(s, -1));
+    cw->result = result;
+    cw->finished = true;
+}
+
+int cmdIsFinished(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    lua_pushboolean(s, w->finished);
+    return 1;
+}
+
+int cmdResult(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (w->result == 0) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, w->result);
+    return 1;
+}
+
+// Resolves a target arg (Object or Position wrapper) to a position; returns
+// false if the arg is neither.
+bool targetPosition(lua_State* s, int idx, Vec3& out) {
+    if (!lua_isuserdata(s, idx)) return false;
+    Wrapper* w = checkWrapper(s, idx);
+    if (w->kind == WrapperKind::Position) { out = w->pos; return true; }
+    if (w->kind == WrapperKind::Object) {
+        const GameObject* o = wrapperObject(s, w);
+        if (!o) return false;
+        out = o->position;
+        return true;
+    }
+    return false;
+}
+
+int objMoveTo(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    Vec3 target;
+    if (!targetPosition(s, 2, target)) { lua_pushnil(s); return 1; }
+    GameObject* g = w->sim->object(o->id);
+    g->position = target;
+    pushCommandBlock(s, w->sim, 0);
+    return 1;
+}
+
+int objAttackTarget(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o || !lua_isuserdata(s, 2)) { lua_pushnil(s); return 1; }
+    // Record the attack target id on the object.
+    Wrapper* t = checkWrapper(s, 2);
+    if (t->kind != WrapperKind::Object) { lua_pushnil(s); return 1; }
+    GameObject* g = w->sim->object(o->id);
+    g->attackTargetId = t->id;
+    pushCommandBlock(s, w->sim, 0);
+    return 1;
+}
+
+int objGetAttackTarget(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o || o->attackTargetId == 0) { lua_pushnil(s); return 1; }
+    pushObject(s, w->sim, w->sim->object(o->attackTargetId));
+    return 1;
+}
+
+int objHasAttackTarget(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    lua_pushboolean(s, o && o->attackTargetId != 0);
+    return 1;
+}
+
+int objReleaseUnit(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    (void)w; // no-op: no unit pools in this sim tier
+    return 0;
+}
+
+int objLockCurrentOrders(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (o) w->sim->object(o->id)->ordersLocked = true;
+    return 0;
+}
+
+int objUnlockCurrentOrders(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (o) w->sim->object(o->id)->ordersLocked = false;
+    return 0;
+}
+
+int objTakeDamage(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    double dmg = luaL_checknumber(s, 2);
+    if (!o) return 0;
+    GameObject* g = w->sim->object(o->id);
+    if (!g->invulnerable) {
+        g->hull = std::max(0.0, g->hull - dmg);
+        if (g->hull == 0.0) g->alive = false;
+    }
+    return 0;
+}
+
+int objDespawn(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) return 0;
+    GameObject* g = w->sim->object(o->id);
+    g->alive = false;
+    return 0;
+}
+
+int objMakeInvulnerable(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    bool inv = lua_toboolean(s, 2);
+    const GameObject* o = wrapperObject(s, w);
+    if (o) w->sim->object(o->id)->invulnerable = inv;
+    return 0;
+}
+
+int objSetSelectable(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    bool sel = lua_toboolean(s, 2);
+    const GameObject* o = wrapperObject(s, w);
+    if (o) w->sim->object(o->id)->selectable = sel;
+    return 0;
+}
+
+int objCanGarrison(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o || !lua_isuserdata(s, 2)) { lua_pushboolean(s, 0); return 1; }
+    Wrapper* t = checkWrapper(s, 2);
+    const GameObject* container = wrapperObject(s, t);
+    // Both must exist; the container must have garrison capacity
+    // (modeled: any object can hold units for now).
+    lua_pushboolean(s, o->alive && container && container->alive);
+    return 1;
+}
+
+int objGarrison(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o || !lua_isuserdata(s, 2)) { lua_pushboolean(s, 0); return 1; }
+    Wrapper* t = checkWrapper(s, 2);
+    bool ok = w->sim->garrisonUnit(o->id, t->id);
+    lua_pushboolean(s, ok);
+    return 1;
+}
+
+int objTryGarrison(lua_State* s) {
+    return objGarrison(s);
+}
+
+int objLeaveGarrison(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (o) w->sim->ungarrisonUnit(o->id);
+    return 0;
+}
+
+int objEjectGarrison(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) return 0;
+    std::vector<int> ids = o->garrisonedUnits;
+    for (int id : ids) w->sim->ungarrisonUnit(id);
+    return 0;
+}
+
+// ---- global spawn ---------------------------------------------------------
+
+int spawnUnit(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    // arg 1: type wrapper or type name; arg 2: position wrapper or object;
+    // arg 3: player wrapper or faction name
+    std::string typeName;
+    if (lua_isuserdata(s, 1)) {
+        Wrapper* t = checkWrapper(s, 1);
+        if (t->kind != WrapperKind::Type) { lua_pushnil(s); return 1; }
+        const char* n = typeNameFromId(s, t);
+        if (!n) { lua_pushnil(s); return 1; }
+        typeName = n;
+        lua_pop(s, 2);
+    } else {
+        typeName = luaL_checkstring(s, 1);
+    }
+    Vec3 pos;
+    if (!targetPosition(s, 2, pos)) { lua_pushnil(s); return 1; }
+    int playerId = 0;
+    if (lua_isuserdata(s, 3)) {
+        Wrapper* p = checkWrapper(s, 3);
+        playerId = p->id;
+    } else {
+        const Player* pl = sim->findPlayer(luaL_checkstring(s, 3));
+        if (!pl) { lua_pushnil(s); return 1; }
+        playerId = pl->id;
+    }
+    int newId = sim->spawnUnit(typeName, playerId, pos);
+    if (newId == 0) { lua_pushnil(s); return 1; }
+    // Returns a list whose first entry is the spawned object (documented).
+    lua_createtable(s, 1, 0);
+    pushObject(s, sim, sim->object(newId));
+    lua_rawseti(s, -2, 1);
+    return 1;
+}
+
+int reinforceUnit(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    std::string typeName;
+    if (lua_isuserdata(s, 1)) {
+        Wrapper* t = checkWrapper(s, 1);
+        if (t->kind != WrapperKind::Type) { lua_pushnil(s); return 1; }
+        const char* n = typeNameFromId(s, t);
+        if (!n) { lua_pushnil(s); return 1; }
+        typeName = n;
+        lua_pop(s, 2);
+    } else {
+        typeName = luaL_checkstring(s, 1);
+    }
+    // Y=false adds to the reinforcement pool (no spawn); Y=position spawns.
+    if (lua_isnoneornil(s, 2) || (lua_isboolean(s, 2) && !lua_toboolean(s, 2))) {
+        pushCommandBlock(s, sim, 0);
+        return 1;
+    }
+    Vec3 pos;
+    if (!targetPosition(s, 2, pos)) { pushCommandBlock(s, sim, 0); return 1; }
+    int playerId = 0;
+    if (lua_isuserdata(s, 3)) {
+        Wrapper* p = checkWrapper(s, 3);
+        playerId = p->id;
+    } else {
+        const Player* pl = sim->findPlayer(luaL_checkstring(s, 3));
+        if (!pl) { pushCommandBlock(s, sim, 0); return 1; }
+        playerId = pl->id;
+    }
+    sim->spawnUnit(typeName, playerId, pos);
+    pushCommandBlock(s, sim, 0);
+    return 1;
+}
+
 // ---- __index dispatch ----------------------------------------------------
 // The shared LuaWrapperMetaTable.__index receives (wrapper, key). We look up
 // the method by name in a per-kind method table and return it.
@@ -537,6 +793,23 @@ const MethodEntry kObjectMethods[] = {
     {"Has_Garrison", objHasGarrison},
     {"Is_In_Garrison", objIsInGarrison},
     {"Get_Time_Till_Dead", objGetTimeTillDead},
+    // Actions
+    {"Move_To", objMoveTo},
+    {"Attack_Target", objAttackTarget},
+    {"Get_Attack_Target", objGetAttackTarget},
+    {"Has_Attack_Target", objHasAttackTarget},
+    {"Release_Unit", objReleaseUnit},
+    {"Lock_Current_Orders", objLockCurrentOrders},
+    {"Unlock_Current_Orders", objUnlockCurrentOrders},
+    {"Take_Damage", objTakeDamage},
+    {"Despawn", objDespawn},
+    {"Make_Invulnerable", objMakeInvulnerable},
+    {"Set_Selectable", objSetSelectable},
+    {"Can_Garrison", objCanGarrison},
+    {"Garrison", objGarrison},
+    {"Try_Garrison", objTryGarrison},
+    {"Leave_Garrison", objLeaveGarrison},
+    {"Eject_Garrison", objEjectGarrison},
 };
 
 const MethodEntry kPlayerMethods[] = {
@@ -564,12 +837,18 @@ const MethodEntry kPositionMethods[] = {
     {"Get_XYZ", posGetXYZ},
 };
 
+const MethodEntry kCommandMethods[] = {
+    {"IsFinished", cmdIsFinished},
+    {"Result", cmdResult},
+};
+
 const MethodEntry* methodsFor(WrapperKind kind) {
     switch (kind) {
         case WrapperKind::Object: return kObjectMethods;
         case WrapperKind::Player: return kPlayerMethods;
         case WrapperKind::Type: return kTypeMethods;
         case WrapperKind::Position: return kPositionMethods;
+        case WrapperKind::Command: return kCommandMethods;
     }
     return nullptr;
 }
@@ -580,6 +859,7 @@ int methodCountFor(WrapperKind kind) {
         case WrapperKind::Player: return static_cast<int>(sizeof(kPlayerMethods) / sizeof(kPlayerMethods[0]));
         case WrapperKind::Type: return static_cast<int>(sizeof(kTypeMethods) / sizeof(kTypeMethods[0]));
         case WrapperKind::Position: return static_cast<int>(sizeof(kPositionMethods) / sizeof(kPositionMethods[0]));
+        case WrapperKind::Command: return static_cast<int>(sizeof(kCommandMethods) / sizeof(kCommandMethods[0]));
     }
     return 0;
 }
@@ -613,6 +893,9 @@ int wrapperToString(lua_State* s) {
             break;
         case WrapperKind::Position:
             lua_pushfstring(s, "PositionWrapper");
+            break;
+        case WrapperKind::Command:
+            lua_pushfstring(s, "CommandBlock");
             break;
     }
     return 1;
@@ -680,6 +963,14 @@ void registerObjectBindings(LuaHost& lua, SimState& sim) {
     lua_pushlightuserdata(s, &sim);
     lua_pushcclosure(s, findNearest, 1);
     lua_setglobal(s, "Find_Nearest");
+
+    // Spawning.
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, spawnUnit, 1);
+    lua_setglobal(s, "Spawn_Unit");
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, reinforceUnit, 1);
+    lua_setglobal(s, "Reinforce_Unit");
 }
 
 } // namespace eaw

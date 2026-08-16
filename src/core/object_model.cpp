@@ -1,5 +1,6 @@
 #include "core/object_model.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -58,6 +59,46 @@ GameObject* SimState::object(int id) {
 
 void SimState::removeObject(int id) {
     objects_.erase(id);
+}
+
+int SimState::spawnUnit(const std::string& typeName, int playerId, const Vec3& pos) {
+    if (!type(typeName)) return 0;
+    Vec3 p = pos;
+    // Trivial collision check: if something already occupies the exact spot,
+    // nudge along +x until free.
+    bool occupied = true;
+    while (occupied) {
+        occupied = false;
+        for (const auto& [id, o] : objects_) {
+            if (o.typeName == typeName && o.position.x == p.x &&
+                o.position.y == p.y && o.position.z == p.z) {
+                occupied = true;
+                break;
+            }
+        }
+        if (occupied) p.x += 1.0;
+    }
+    return addObject(typeName, playerId, p).id;
+}
+
+bool SimState::garrisonUnit(int unitId, int containerId) {
+    GameObject* unit = object(unitId);
+    GameObject* container = object(containerId);
+    if (!unit || !container || !unit->alive || !container->alive) return false;
+    if (unit->inGarrison) ungarrisonUnit(unitId);
+    container->garrisonedUnits.push_back(unitId);
+    unit->inGarrison = true;
+    return true;
+}
+
+void SimState::ungarrisonUnit(int unitId) {
+    GameObject* unit = object(unitId);
+    if (!unit) return;
+    unit->inGarrison = false;
+    for (auto& [id, o] : objects_) {
+        auto& g = o.garrisonedUnits;
+        g.erase(std::remove(g.begin(), g.end(), unitId), g.end());
+    }
 }
 
 std::vector<const GameObject*> SimState::allObjects() const {

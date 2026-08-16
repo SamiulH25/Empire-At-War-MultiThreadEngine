@@ -9,6 +9,7 @@ namespace eaw {
 ScriptManager::ScriptManager(MegaFileManager& files)
     : files_(files) {
     registerPgBindings(host_);
+    registerObjectBindings(host_, sim_);
     setEngineTime(host_.state(), time_);
 }
 

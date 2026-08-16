@@ -249,6 +249,159 @@ void testModStyleQueryScript() {
     lua_pop(fx.lua.state(), 1);
 }
 
+void testSpawnUnit() {
+    Fixture fx;
+    fx.lua.runScript(
+        "p = Find_Player('REBEL')\n"
+        "pos = Find_First_Object('X_WING'):Get_Position()\n"
+        "list = Spawn_Unit('X_WING', pos, p)\n"
+        "n = #list\n"
+        "spawned = list[1]\n"
+        "owner = spawned:Get_Owner()\n"
+        "faction = owner:Get_Faction_Name()\n");
+    lua_getglobal(fx.lua.state(), "n");
+    check(lua_tointeger(fx.lua.state(), -1) == 1, "Spawn_Unit returns a 1-entry list");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "faction");
+    check(std::string(lua_tostring(fx.lua.state(), -1)) == "REBEL", "spawned unit owned by player");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "spawned");
+    check(lua_isuserdata(fx.lua.state(), -1), "spawned unit is a wrapper");
+    lua_pop(fx.lua.state(), 1);
+}
+
+void testSpawnUnitByName() {
+    Fixture fx;
+    fx.lua.runScript(
+        "pos = Find_First_Object('X_WING'):Get_Position()\n"
+        "list = Spawn_Unit('ISD', pos, 'REBEL')\n"
+        "n = #list\n"
+        "name = list[1]:Get_Name()\n");
+    lua_getglobal(fx.lua.state(), "n");
+    check(lua_tointeger(fx.lua.state(), -1) == 1, "Spawn_Unit by type name");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "name");
+    check(std::string(lua_tostring(fx.lua.state(), -1)) == "ISD", "spawned type name");
+    lua_pop(fx.lua.state(), 1);
+}
+
+void testMoveTo() {
+    Fixture fx;
+    fx.lua.runScript(
+        "o = Find_First_Object('X_WING')\n"
+        "target = Find_First_Object('ISD')\n"
+        "cmd = o:Move_To(target)\n"
+        "finished = cmd:IsFinished()\n"
+        "d = o:Get_Distance(target)\n");
+    lua_getglobal(fx.lua.state(), "finished");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "Move_To command finishes");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "d");
+    double d = lua_tonumber(fx.lua.state(), -1);
+    check(d < 0.001, "Move_To moves the object to the target");
+    lua_pop(fx.lua.state(), 1);
+}
+
+void testAttackTarget() {
+    Fixture fx;
+    fx.lua.runScript(
+        "o = Find_First_Object('X_WING')\n"
+        "t = Find_First_Object('ISD')\n"
+        "o:Attack_Target(t)\n"
+        "at = o:Get_Attack_Target()\n"
+        "name = at:Get_Name()\n"
+        "has = o:Has_Attack_Target()\n");
+    lua_getglobal(fx.lua.state(), "name");
+    check(std::string(lua_tostring(fx.lua.state(), -1)) == "ISD", "Attack_Target sets target");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "has");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "Has_Attack_Target true");
+    lua_pop(fx.lua.state(), 1);
+}
+
+void testTakeDamageAndDeath() {
+    Fixture fx;
+    fx.lua.runScript(
+        "o = Find_First_Object('X_WING')\n"
+        "o:Take_Damage(0.25)\n"
+        "h = o:Get_Hull()\n"
+        "v = o:Is_Valid()\n");
+    lua_getglobal(fx.lua.state(), "h");
+    double h = lua_tonumber(fx.lua.state(), -1);
+    check(h > 0.74 && h < 0.76, "Take_Damage reduces hull");
+    lua_pop(fx.lua.state(), 1);
+    // kill it
+    fx.lua.runScript("o:Take_Damage(10)\nv = o:Is_Valid()\n");
+    lua_getglobal(fx.lua.state(), "v");
+    check(lua_toboolean(fx.lua.state(), -1) == 0, "object invalid after lethal damage");
+    lua_pop(fx.lua.state(), 1);
+}
+
+void testGarrison() {
+    Fixture fx;
+    fx.lua.runScript(
+        "container = Find_First_Object('ISD')\n"
+        "unit = Find_First_Object('X_WING')\n"
+        "ok = unit:Garrison(container)\n"
+        "g = container:Get_Garrisoned_Units()\n"
+        "n = #g\n"
+        "gi = unit:Is_In_Garrison()\n"
+        "hg = container:Has_Garrison()\n");
+    lua_getglobal(fx.lua.state(), "ok");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "Garrison succeeds");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "n");
+    check(lua_tointeger(fx.lua.state(), -1) == 1, "container has garrisoned unit");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "gi");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "unit Is_In_Garrison");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "hg");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "Has_Garrison true");
+    lua_pop(fx.lua.state(), 1);
+    // leave garrison
+    fx.lua.runScript(
+        "unit:Leave_Garrison()\n"
+        "gi = unit:Is_In_Garrison()\n"
+        "g = container:Get_Garrisoned_Units()\n"
+        "n = #g\n");
+    lua_getglobal(fx.lua.state(), "gi");
+    check(lua_toboolean(fx.lua.state(), -1) == 0, "Leave_Garrison works");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "n");
+    check(lua_tointeger(fx.lua.state(), -1) == 0, "container emptied");
+    lua_pop(fx.lua.state(), 1);
+}
+
+void testLockOrdersAndInvulnerable() {
+    Fixture fx;
+    fx.lua.runScript(
+        "o = Find_First_Object('X_WING')\n"
+        "o:Lock_Current_Orders()\n"
+        "o:Make_Invulnerable(true)\n"
+        "o:Take_Damage(5)\n"
+        "h = o:Get_Hull()\n");
+    lua_getglobal(fx.lua.state(), "h");
+    check(lua_tonumber(fx.lua.state(), -1) == 1.0, "invulnerable object takes no damage");
+    lua_pop(fx.lua.state(), 1);
+}
+
+void testReinforceUnit() {
+    Fixture fx;
+    fx.lua.runScript(
+        "p = Find_Player('EMPIRE')\n"
+        "cmd = Reinforce_Unit('ISD', false, p)\n"
+        "fin = cmd:IsFinished()\n"
+        "r = cmd:Result()\n"
+        "n = #Find_All_Objects_Of_Type('ISD')\n");
+    lua_getglobal(fx.lua.state(), "fin");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "Reinforce_Unit returns command");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "n");
+    check(lua_tointeger(fx.lua.state(), -1) == 1, "reinforce pool adds no object");
+    lua_pop(fx.lua.state(), 1);
+}
+
 } // namespace
 
 int main() {
@@ -263,6 +416,14 @@ int main() {
     testHeroAndGarrison();
     testIsValidAfterRemoval();
     testModStyleQueryScript();
+    testSpawnUnit();
+    testSpawnUnitByName();
+    testMoveTo();
+    testAttackTarget();
+    testTakeDamageAndDeath();
+    testGarrison();
+    testLockOrdersAndInvulnerable();
+    testReinforceUnit();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;

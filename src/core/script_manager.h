@@ -12,7 +12,9 @@
 
 #include "core/lua_host.h"
 #include "core/meg_manager.h"
+#include "core/object_model.h"
 #include "core/pg_bindings.h"
+#include "core/pg_object_bindings.h"
 
 #include <string>
 
@@ -26,6 +28,9 @@ public:
     ScriptManager& operator=(const ScriptManager&) = delete;
 
     lua_State* state() const { return host_.state(); }
+
+    // The sim this manager's scripts query and mutate (object bindings).
+    SimState& sim() { return sim_; }
 
     // Loads and runs a script chunk from the file manager (loose override
     // applies). Scripts typically define functions; they may run top-level
@@ -48,6 +53,7 @@ public:
 private:
     MegaFileManager& files_;
     LuaHost host_;
+    SimState sim_;
     double time_ = 0.0;
 };
 
