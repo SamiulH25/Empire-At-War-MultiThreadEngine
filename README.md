@@ -9,9 +9,16 @@ Hybrid: first a **performance patch DLL** injected into the official 64-bit exe,
 **full reimplementation** of the engine core. Full mod compatibility (Thrawn's Revenge,
 EAW Remake, etc.) is a hard requirement.
 
+**Strategy revision (2026-08-16):** leverage the documented modding ecosystem rather than
+treating the exe as a black box. The .meg archive format is officially documented
+(Petrolution), the Lua/XML surface is fully documented (Alamo Engine Tools), and ready-made
+tools exist. The game is confirmed **single-core-bound** (live measurement: main thread
+40-75% of one core). The engine work proceeds against the documented data formats +
+targeted binary analysis.
+
 ## Status
 
-Research phase — static and dynamic analysis of the remaster binary.
+Research phase — static/dynamic analysis complete; pivoting to ecosystem-based engine work.
 
 ## Key Facts So Far
 

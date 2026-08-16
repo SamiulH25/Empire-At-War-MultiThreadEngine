@@ -24,6 +24,7 @@ Build a multi-threaded engine for *Star Wars: Empire at War* (EAW) + *Forces of 
 | Mod compatibility | Must load Thrawn's Revenge, EAW Remake, and other XML/Lua mods |
 | Multiplayer | Single-player focus; netcode research deprioritized |
 | Work split | CommandCodeBot does all implementation work |
+| **Strategy revision (2026-08-16)** | **Leverage the documented modding ecosystem instead of pure binary RE.** The .meg format is officially documented (Petrolution), the Lua/XML surface is fully documented (Alamo Engine Tools), and ready-made tools exist (Mega File Editor, petro-meg Rust lib). The engine is single-core-bound (confirmed live). Build the threaded engine **against the documented data formats + binary analysis where needed**, not by treating the exe as a black box to fully reverse. |
 
 ## 3. Initial Binary Findings (2026-08-15)
 
