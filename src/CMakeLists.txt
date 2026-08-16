@@ -18,6 +18,7 @@ add_library(eaw_core STATIC
     core/meg_file.cpp
     core/xml.cpp
     core/game_constants.cpp
+    core/job_system.cpp
 )
 target_include_directories(eaw_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(eaw_core PUBLIC cxx_std_20)
@@ -46,3 +47,9 @@ add_executable(xml_tests
 )
 target_link_libraries(xml_tests PRIVATE eaw_core)
 add_test(NAME xml_tests COMMAND xml_tests)
+
+add_executable(job_system_tests
+    tests/test_job_system.cpp
+)
+target_link_libraries(job_system_tests PRIVATE eaw_core)
+add_test(NAME job_system_tests COMMAND job_system_tests)
