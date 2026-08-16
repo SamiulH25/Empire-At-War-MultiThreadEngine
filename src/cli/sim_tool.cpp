@@ -4,7 +4,8 @@
 // runs it through the parallel Simulation, and reports the outcome.
 //
 // Usage:
-//   sim_tool battle [--workers N] [--ticks N] [--fighters N] [--capitals N]
+//   sim_tool battle [--workers N] [--ticks N] [--fighters N] [--escorts N]
+//                   [--capitals N] [--game <dir-with-Data\*.XML>]
 //   sim_tool battle --compare
 //
 // --compare runs the same battle with 1 worker and with (hardware-1) workers,
@@ -28,6 +29,7 @@ struct BattleConfig {
     unsigned workers = 0; // 0 = hardware-1
     int ticks = 3600;     // max ticks (120 s at 30 Hz)
     int fighters = 24;    // per side
+    int escorts = 0;      // per side (corvettes)
     int capitals = 4;     // per side
     const char* gameRoot = ""; // game Data dir for real unit XML (optional)
 };
@@ -70,7 +72,10 @@ void loadUnitTypes(eaw::SimState& state, const char* gameRoot) {
         eaw::UnitDataLoader loader;
         std::string base = std::string(gameRoot) + "\\Data\\";
         const char* files[] = {"SPACEUNITSFIGHTERS.XML",
-                               "SPACEUNITSCAPITAL.XML"};
+                               "SPACEUNITSCAPITAL.XML",
+                               "SPACEUNITSCORVETTES.XML",
+                               "SPACEUNITSFRIGATES.XML",
+                               "SPACEUNITSSUPERS.XML"};
         std::vector<eaw::ObjectType> all;
         for (const char* file : files) {
             std::string xml = readFile((base + file).c_str());
@@ -147,17 +152,20 @@ void orderAttack(eaw::ScriptManager& scripts, const std::string& rebelFighter,
     scripts.runScript(s);
 }
 
-// Picks the fighter/capital type names per side, preferring real game units
-// when the loader found them.
+// Picks the fighter/capital/escort type names per side, preferring real game
+// units when the loader found them.
 void pickFleetTypes(eaw::SimState& state, bool realData,
                     std::string& rebelFighter, std::string& rebelCapital,
-                    std::string& empireFighter, std::string& empireCapital) {
+                    std::string& empireFighter, std::string& empireCapital,
+                    std::string& rebelEscort, std::string& empireEscort) {
     if (realData) {
         // Prefer iconic units; fall back to whatever loaded.
         const char* rF[] = {"X-Wing", "A-Wing", nullptr};
         const char* eF[] = {"TIE_Fighter", "TIE_Interceptor", nullptr};
         const char* rC[] = {"Calamari_Cruiser", "Home_One", "Nebulon_B", nullptr};
         const char* eC[] = {"Generic_Star_Destroyer", "Star_Destroyer", "Victory_Star_Destroyer", nullptr};
+        const char* rE[] = {"Corellian_Corvette", "Tantive_IV", "Corellian_Gunboat", nullptr};
+        const char* eE[] = {"Tartan_Patrol_Cruiser", "IPV1_System_Patrol_Craft", "Broadside_Class_Cruiser", nullptr};
         auto pick = [&](const char* const* names) -> std::string {
             for (int i = 0; names[i]; ++i) {
                 if (state.type(names[i])) return names[i];
@@ -173,12 +181,16 @@ void pickFleetTypes(eaw::SimState& state, bool realData,
         empireFighter = pick(eF);
         rebelCapital = pick(rC);
         empireCapital = pick(eC);
+        rebelEscort = pick(rE);
+        empireEscort = pick(eE);
         return;
     }
     rebelFighter = "REBEL_FIGHTER";
     rebelCapital = "REBEL_CAPITAL";
     empireFighter = "EMPIRE_FIGHTER";
     empireCapital = "EMPIRE_CAPITAL";
+    rebelEscort = "";
+    empireEscort = "";
 }
 
 BattleResult runBattle(const BattleConfig& cfg) {
@@ -194,8 +206,9 @@ BattleResult runBattle(const BattleConfig& cfg) {
                     state.type("ISD");
 
     std::string rebelFighter, rebelCapital, empireFighter, empireCapital;
+    std::string rebelEscort, empireEscort;
     pickFleetTypes(state, realData, rebelFighter, rebelCapital,
-                   empireFighter, empireCapital);
+                   empireFighter, empireCapital, rebelEscort, empireEscort);
     // Fill in any missing side/class with a default so the battle always has
     // both fleets.
     auto ensureType = [&](std::string& name, const char* fallbackName,
@@ -214,19 +227,33 @@ BattleResult runBattle(const BattleConfig& cfg) {
                cfg.fighters, cfg.capitals, 0, 0);
     spawnFleet(state, empireFighter, empireCapital, empire.id,
                cfg.fighters, cfg.capitals, 800, 0);
+    // Escorts (corvettes) if configured and available.
+    if (cfg.escorts > 0 && !rebelEscort.empty() && state.type(rebelEscort)) {
+        spawnFleet(state, rebelEscort, "", rebel.id, cfg.escorts, 0, -80, 0);
+    }
+    if (cfg.escorts > 0 && !empireEscort.empty() && state.type(empireEscort)) {
+        spawnFleet(state, empireEscort, "", empire.id, cfg.escorts, 0, 880, 0);
+    }
 
     orderAttack(sim.scripts(), rebelFighter, rebelCapital,
                 empireFighter, empireCapital);
 
-    std::printf("  fleets      : %s x%d + %s x%d vs %s x%d + %s x%d%s\n",
+    std::printf("  fleets      : %s x%d + %s x%d%s vs %s x%d + %s x%d%s%s\n",
                 rebelFighter.c_str(), cfg.fighters, rebelCapital.c_str(),
-                cfg.capitals, empireFighter.c_str(), cfg.fighters,
+                cfg.capitals,
+                (cfg.escorts > 0 && !rebelEscort.empty())
+                    ? (" + " + rebelEscort + " x" + std::to_string(cfg.escorts)).c_str()
+                    : "",
+                empireFighter.c_str(), cfg.fighters,
                 empireCapital.c_str(), cfg.capitals,
+                (cfg.escorts > 0 && !empireEscort.empty())
+                    ? (" + " + empireEscort + " x" + std::to_string(cfg.escorts)).c_str()
+                    : "",
                 realData ? " [real game data]" : "");
 
     BattleResult res;
-    res.rebelStart = cfg.fighters + cfg.capitals;
-    res.empireStart = cfg.fighters + cfg.capitals;
+    res.rebelStart = cfg.fighters + cfg.capitals + cfg.escorts;
+    res.empireStart = cfg.fighters + cfg.capitals + cfg.escorts;
 
     auto t0 = std::chrono::steady_clock::now();
     const double dt = 1.0 / 30.0;
@@ -304,8 +331,8 @@ int cmdCompare(const BattleConfig& base) {
 
 void usage() {
     std::printf("usage:\n"
-                "  sim_tool battle [--workers N] [--ticks N] [--fighters N] [--capitals N]\n"
-                "                [--game <dir-with-Data\\*.XML>]\n"
+                "  sim_tool battle [--workers N] [--ticks N] [--fighters N] [--escorts N]\n"
+                "                [--capitals N] [--game <dir-with-Data\\*.XML>]\n"
                 "  sim_tool battle --compare\n");
 }
 
@@ -325,6 +352,7 @@ int main(int argc, char** argv) {
         if (std::strcmp(argv[i], "--workers") == 0) cfg.workers = std::atoi(need("--workers"));
         else if (std::strcmp(argv[i], "--ticks") == 0) cfg.ticks = std::atoi(need("--ticks"));
         else if (std::strcmp(argv[i], "--fighters") == 0) cfg.fighters = std::atoi(need("--fighters"));
+        else if (std::strcmp(argv[i], "--escorts") == 0) cfg.escorts = std::atoi(need("--escorts"));
         else if (std::strcmp(argv[i], "--capitals") == 0) cfg.capitals = std::atoi(need("--capitals"));
         else if (std::strcmp(argv[i], "--game") == 0) cfg.gameRoot = need("--game");
         else if (std::strcmp(argv[i], "--compare") == 0) compare = true;
