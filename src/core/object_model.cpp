@@ -197,6 +197,82 @@ void SimState::tickAbilities(double dt) {
     }
 }
 
+// --- fog of war ----------------------------------------------------------
+
+namespace {
+// Coarse reveal-cell size (game units). Keeps the revealed-cell set small.
+constexpr double kRevealCell = 200.0;
+constexpr double kRevealRange = 300.0; // a unit's sight radius
+
+int64_t cellKey(double x, double y) {
+    int64_t cx = static_cast<int64_t>(std::floor(x / kRevealCell));
+    int64_t cy = static_cast<int64_t>(std::floor(y / kRevealCell));
+    return (cx << 32) ^ (cy & 0xffffffffLL);
+}
+} // namespace
+
+void SimState::revealArea(int playerId, const Vec3& center, double radius) {
+    Player* p = player(playerId);
+    if (!p) return;
+    int cells = static_cast<int>(std::ceil(radius / kRevealCell)) + 1;
+    for (int dx = -cells; dx <= cells; ++dx) {
+        for (int dy = -cells; dy <= cells; ++dy) {
+            double cx = center.x + dx * kRevealCell;
+            double cy = center.y + dy * kRevealCell;
+            if (std::hypot(cx - center.x, cy - center.y) <= radius) {
+                p->revealedCells[cellKey(cx, cy)] = 0.0;
+            }
+        }
+    }
+}
+
+void SimState::revealAll(int playerId) {
+    if (Player* p = player(playerId)) p->revealAll = true;
+}
+
+void SimState::updateVisibility(int playerId, double now) {
+    Player* p = player(playerId);
+    if (!p) return;
+    // Gather the player's unit positions (sight sources).
+    std::vector<Vec3> sights;
+    for (const auto& [id, o] : objects_) {
+        if (o.playerId == playerId && o.alive) sights.push_back(o.position);
+    }
+    for (auto& [id, o] : objects_) {
+        if (!o.alive) continue;
+        bool visible = p->revealAll;
+        if (!visible) {
+            // In a permanently revealed cell?
+            if (p->revealedCells.count(cellKey(o.position.x, o.position.y))) {
+                visible = true;
+            } else {
+                // Within sight of any of the player's units?
+                for (const Vec3& s : sights) {
+                    if (s.distanceTo(o.position) <= kRevealRange) {
+                        visible = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (visible) {
+            p->lastSeen[id] = now;
+        } else if (!p->lastSeen.count(id)) {
+            p->lastSeen[id] = -1.0; // known but never seen
+        }
+    }
+}
+
+double SimState::timeSinceSeen(int playerId, int objectId, double now) const {
+    const Player* p = player(playerId);
+    if (!p) return 0.0;
+    auto it = p->lastSeen.find(objectId);
+    if (it == p->lastSeen.end()) return 1e18; // never seen
+    if (it->second < 0.0) return 1e18;
+    if (it->second >= now) return 0.0;
+    return now - it->second;
+}
+
 // --- diplomacy ------------------------------------------------------------
 
 void SimState::makeAlly(int a, int b) {

@@ -193,6 +193,10 @@ void Simulation::tick(double dt) {
     stepEconomy(dt);
     stepGalactic(dt);
     sim().tickAbilities(dt);
+    // Fog of war: update visibility for every player.
+    for (const Player& p : sim().allPlayers()) {
+        sim().updateVisibility(p.id, time_);
+    }
     snapshotPositions();
     stepPathfinding();
     updateObjects(dt);

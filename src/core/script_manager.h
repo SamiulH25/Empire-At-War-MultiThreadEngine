@@ -16,6 +16,7 @@
 #include "core/object_model.h"
 #include "core/pg_bindings.h"
 #include "core/pg_event_bindings.h"
+#include "core/pg_fog_bindings.h"
 #include "core/pg_object_bindings.h"
 #include "core/pg_taskforce_bindings.h"
 

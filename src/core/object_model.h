@@ -83,6 +83,15 @@ struct Player {
     // the game's tech model where units default to unlocked).
     double incomePerSecond = 10.0;
     std::vector<std::string> lockedTypes;
+    // Fog of war: seconds since each object was last seen (object id ->
+    // game time of last sighting; -1 = never seen). Filled by the sim's fog
+    // step; read by perception (TimeLastSeen).
+    std::unordered_map<int, double> lastSeen;
+    // Revealed positions (permanent reveal from FogOfWar.Reveal): a coarse
+    // grid of revealed cells (cell key -> game time revealed).
+    std::unordered_map<int64_t, double> revealedCells;
+    // True after FogOfWar.Reveal_All: everything is always visible.
+    bool revealAll = false;
     // Diplomatic relations (Make_Ally / Make_Enemy). Defaults:
     //  - a player is an ally of itself
     //  - all other players are enemies until allied
@@ -203,6 +212,19 @@ public:
     void resetAbilityCooldown(int objectId, const std::string& name);
     // Tick: reduce ability cooldowns. Called from the sim update.
     void tickAbilities(double dt);
+
+    // --- fog of war ---
+    // Reveals a permanent circular area for a player (coarse grid cells).
+    void revealArea(int playerId, const Vec3& center, double radius);
+    // Reveals everything for a player (all current + future objects seen).
+    void revealAll(int playerId);
+    // Updates visibility: objects within the reveal range of the player's
+    // units (or inside revealed cells) get their lastSeen bumped to `now`.
+    // Called each tick.
+    void updateVisibility(int playerId, double now);
+    // Seconds since the player last saw the object (perception TimeLastSeen).
+    // Returns 0 if currently visible, a growing value otherwise.
+    double timeSinceSeen(int playerId, int objectId, double now) const;
 
     // --- diplomacy ---
     // Makes `a` and `b` allies (symmetric; each stays allied to itself).

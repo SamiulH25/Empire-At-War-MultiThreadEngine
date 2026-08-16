@@ -357,7 +357,12 @@ double PerceptionSystem::evalQuery(
         return t && t->name == catMask ? 1.0 : 0.0;
     }
     if (field == "TimeLastSeen" || field == "TimeLastSeenUnnormalized") {
-        return 0.0; // no fog model; assume always visible
+        // Fog of war: time since the evaluating player saw the target.
+        // (0 while visible, growing after it leaves sight.)
+        if (ctx.self) {
+            return ctx.sim->timeSinceSeen(ctx.self->playerId, obj->id, ctx.gameAge);
+        }
+        return 0.0;
     }
     if (field.rfind("Hints.", 0) == 0) {
         return 0.0; // story hints not modeled

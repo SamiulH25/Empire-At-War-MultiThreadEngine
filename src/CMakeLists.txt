@@ -36,6 +36,7 @@ add_library(eaw_core STATIC
     core/pg_object_bindings.cpp
     core/pg_event_bindings.cpp
     core/pg_taskforce_bindings.cpp
+    core/pg_fog_bindings.cpp
     core/script_manager.cpp
     core/simulation.cpp
 )
@@ -179,6 +180,12 @@ add_executable(ability_tests
 )
 target_link_libraries(ability_tests PRIVATE eaw_core)
 add_test(NAME ability_tests COMMAND ability_tests)
+
+add_executable(fog_tests
+    tests/test_fog.cpp
+)
+target_link_libraries(fog_tests PRIVATE eaw_core)
+add_test(NAME fog_tests COMMAND fog_tests)
 
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test
