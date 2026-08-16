@@ -16,6 +16,9 @@ __pycache__/
 .idea/
 *.swp
 
+# Ghidra project (local-only, regenerable)
+ghidra/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -151,15 +151,45 @@ Most relevant threading/sync strings found across all binaries (file offsets):
 | corruption/swfoc.exe | `0x00103798` | `Creating heap %p, for thread %d` | ThreadClass gives each thread its own heap |
 | corruption/swfoc.exe | `0x0014B380` | `?initialize@task_scheduler_init@tbb@@...` | Confirms TBB linkage in swfoc.exe |
 
+## Ghidra Project Layout
+
+Local Ghidra project at `<repo>\ghidra\` (gitignored — regenerable, not committed):
+
+| Program (project path) | Imported binary |
+|---|---|
+| `/StarWarsG.exe` | `corruption/StarWarsG.exe` |
+| `/gamebase/StarWarsG.exe` | `GameData/StarWarsG.exe` (separate folder to avoid name conflict) |
+| `/PerceptionFunctionG.dll` | `corruption/PerceptionFunctionG.dll` |
+
+Created with (Ghidra 12.1.2, PyGhidra-ready):
+
+```
+# Batch 1 — corruption exe + perception dll
+C:\Tools\ghidra\support\analyzeHeadless.bat ghidra eawea -import ^
+    "<game root>\corruption\StarWarsG.exe" ^
+    "<game root>\corruption\PerceptionFunctionG.dll" -max-cpu 2
+
+# Batch 2 — GameData exe (same filename → distinct project folder)
+C:\Tools\ghidra\support\analyzeHeadless.bat ghidra "eawea/gamebase" -import ^
+    "<game root>\GameData\StarWarsG.exe" -max-cpu 2
+```
+
+Notes:
+- Both exes are named `StarWarsG.exe`; importing both into the same project folder
+  conflicts, so GameData goes in its own folder.
+- `-max-cpu 2` limits auto-analysis to 2 threads (keeps the machine responsive).
+- The exe paths must not contain `()` or Ghidra's batch wrapper chokes; use the 8.3
+  short path (`C:\PROGRA~2\...`) if the game is under `Program Files (x86)`.
+- Recreate anytime with the two commands above (or the equivalent `-import` calls).
+
 ## Next Steps
 
-1. Install Ghidra + radare2
-2. Full disassembly of `corruption/StarWarsG.exe`
-3. Find main loop, update tick, render path
-4. Locate `ThreadLockMutexClass` methods and all call sites
-5. Find what `LoadThread` actually threads
-6. Locate `LuaCreateThread` binding and the Lua state(s)
-7. Map globals: world object database, perception manager, Lua state pointer
+1. Full disassembly of `corruption/StarWarsG.exe`
+2. Find main loop, update tick, render path
+3. Locate `ThreadLockMutexClass` methods and all call sites
+4. Find what `LoadThread` actually threads
+5. Locate `LuaCreateThread` binding and the Lua state(s)
+6. Map globals: world object database, perception manager, Lua state pointer
 
 ## Known Open Questions
 
