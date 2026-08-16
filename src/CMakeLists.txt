@@ -79,6 +79,49 @@ if(MINGW)
     target_compile_options(patch_d3d9 PRIVATE -mno-red-zone)
 endif()
 
+# Test harness: imports d3d9.dll (the proxy) like the real game does, so we
+# can verify the hook path end-to-end without the actual exe.
+add_executable(fake_game
+    proxy/fake_game.cpp
+)
+set_target_properties(fake_game PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/proxytest")
+# Generate an import library from the built proxy so the exe links against
+# the same d3d9.dll it will load at runtime (the game's own import resolves
+# the same way, from the system d3d9 import lib).
+find_program(GENDEF gendef)
+find_program(DLLTOOL dlltool)
+if(GENDEF AND DLLTOOL)
+    # gendef's -o flag is broken in some MinGW builds; run it in the target
+    # dir and let it write d3d9.def to the cwd.
+    add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/proxytest/libd3d9.a
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/proxytest
+        COMMAND ${GENDEF} $<TARGET_FILE:patch_d3d9>
+        COMMAND ${DLLTOOL} -d ${CMAKE_BINARY_DIR}/proxytest/d3d9.def
+            -l ${CMAKE_BINARY_DIR}/proxytest/libd3d9.a
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/proxytest
+        DEPENDS patch_d3d9)
+    add_custom_target(d3d9_importlib DEPENDS ${CMAKE_BINARY_DIR}/proxytest/libd3d9.a)
+    add_dependencies(fake_game d3d9_importlib)
+    target_link_libraries(fake_game PRIVATE ${CMAKE_BINARY_DIR}/proxytest/libd3d9.a)
+endif()
+add_custom_command(TARGET fake_game POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:patch_d3d9> $<TARGET_FILE_DIR:fake_game>/d3d9.dll)
+add_test(NAME proxy_hook_test
+    COMMAND ${CMAKE_COMMAND} -E env
+        "EAW_PATCH_TARGET=export:SimTick" $<TARGET_FILE:fake_game>)
+# The fake exe and proxy must land in the same dir for the import to resolve.
+set_tests_properties(proxy_hook_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/proxytest")
+# After the run, the proxy must have logged installed + tick hits.
+add_test(NAME proxy_hook_verify
+    COMMAND ${CMAKE_COMMAND} -E env "PYTHONUTF8=1"
+        python ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/verify_hook_log.py
+        ${CMAKE_BINARY_DIR}/proxytest/eaw_patch_hits.txt)
+set_tests_properties(proxy_hook_verify PROPERTIES
+    DEPENDS proxy_hook_test)
+
 # Tests
 enable_testing()
 add_executable(meg_tests
