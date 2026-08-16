@@ -13,6 +13,32 @@ namespace {
 // object sets (design doc 06: read-shared, write-partitioned).
 void integrateObject(GameObject& o, double dt) {
     if (!o.alive || !o.hasMoveTarget) return;
+    // If the unit has a computed path, walk it waypoint by waypoint.
+    if (o.pathIndex < o.path.size()) {
+        Vec3 target = o.path[o.pathIndex];
+        Vec3 d{target.x - o.position.x, target.y - o.position.y, 0.0};
+        double dist = std::sqrt(d.x * d.x + d.y * d.y);
+        double step = o.moveSpeed * dt;
+        if (dist <= step) {
+            o.position.x = target.x;
+            o.position.y = target.y;
+            ++o.pathIndex;
+            if (o.pathIndex >= o.path.size()) {
+                // Path done: arrive at the final move target.
+                o.path.clear();
+                o.pathIndex = 0;
+                o.position.x = o.moveTarget.x;
+                o.position.y = o.moveTarget.y;
+                o.hasMoveTarget = false;
+            }
+        } else {
+            double k = step / dist;
+            o.position.x += d.x * k;
+            o.position.y += d.y * k;
+        }
+        return;
+    }
+    // No path — direct move.
     Vec3 d{o.moveTarget.x - o.position.x,
            o.moveTarget.y - o.position.y,
            o.moveTarget.z - o.position.z};
@@ -82,12 +108,13 @@ void applyDamage(const SimState& sim, GameObject* target,
 } // namespace
 
 Simulation::Simulation(unsigned workerThreads)
-    : scripts_(files_), jobs_(workerThreads) {
+    : scripts_(files_), jobs_(workerThreads), pathfinding_(grid_, jobs_) {
 }
 
 void Simulation::tick(double dt) {
     time_ += dt;
     scripts_.pump(dt);
+    stepPathfinding();
     updateObjects(dt);
     runCombat(dt);
 }
@@ -107,6 +134,43 @@ void Simulation::updateObjects(double dt) {
         }
     });
     ++updateTicks_;
+}
+
+void Simulation::stepPathfinding() {
+    // Units with a move target whose direct line is blocked request a path.
+    // (Simple policy: request once per unit; searches run to completion.)
+    std::vector<int> toRequest;
+    for (const GameObject* o : sim().allObjects()) {
+        if (!o->alive || !o->hasMoveTarget) continue;
+        if (!o->path.empty()) continue; // already following a path
+        if (grid_.lineBlocked(o->position.x, o->position.y,
+                              o->moveTarget.x, o->moveTarget.y)) {
+            toRequest.push_back(o->id);
+        }
+    }
+    for (int id : toRequest) {
+        GameObject* o = sim().object(id);
+        if (!o) continue;
+        int sid = pathfinding_.request(o->position, o->moveTarget);
+        // Store the search id on the object so completions can be matched.
+        o->pathSearchId = sid;
+    }
+    // Step all searches; on completion, hand the waypoints to the unit.
+    pathfinding_.tick([this](int searchId, std::vector<Vec3> wps) {
+        for (const GameObject* o : sim().allObjects()) {
+            GameObject* g = sim().object(o->id);
+            if (g && g->pathSearchId == searchId) {
+                if (!wps.empty()) {
+                    g->path = wps;
+                    g->pathIndex = 1; // skip the start waypoint
+                } else {
+                    g->hasMoveTarget = false;
+                }
+                g->pathSearchId = 0;
+                break;
+            }
+        }
+    });
 }
 
 void Simulation::runCombat(double dt) {

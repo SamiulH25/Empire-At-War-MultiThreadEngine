@@ -14,6 +14,8 @@
 #include "core/job_system.h"
 #include "core/meg_manager.h"
 #include "core/object_model.h"
+#include "core/path_grid.h"
+#include "core/pathfinding.h"
 #include "core/script_manager.h"
 
 namespace eaw {
@@ -29,11 +31,13 @@ public:
     ScriptManager& scripts() { return scripts_; }
     SimState& sim() { return scripts_.sim(); }
     JobSystem& jobs() { return jobs_; }
+    PathGrid& pathGrid() { return grid_; }
+    PathfindingSystem& pathfinding() { return pathfinding_; }
 
     // Advances the sim by dt seconds: time += dt, pump scripts, then run the
-    // parallel object update (per-object slices on the worker pool) and the
-    // two-phase parallel combat pass. Throws LuaError if a script thread
-    // errors.
+    // parallel object update (per-object slices on the worker pool), the
+    // two-phase parallel combat pass, and the pathfinding step.
+    // Throws LuaError if a script thread errors.
     void tick(double dt);
 
     // Current game time in seconds.
@@ -48,10 +52,13 @@ public:
 private:
     void updateObjects(double dt);
     void runCombat(double dt);
+    void stepPathfinding();
 
     MegaFileManager files_;
     ScriptManager scripts_;
     JobSystem jobs_;
+    PathGrid grid_{256, 256, 2.0};
+    PathfindingSystem pathfinding_;
     double time_ = 0.0;
     unsigned long long updateTicks_ = 0;
     unsigned long long totalShots_ = 0;

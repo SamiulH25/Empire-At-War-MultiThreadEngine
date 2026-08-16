@@ -192,6 +192,43 @@ void testParallelDeterminism() {
     check(same, "parallel update is deterministic across runs");
 }
 
+void testUnitNavigatesAroundObstacle() {
+    // A unit ordered to move across a wall must path around it (the sim's
+    // pathfinding integration), not beeline through.
+    eaw::Simulation sim(4);
+    eaw::Player& rebel = sim.sim().addPlayer("Rebel Alliance", "REBEL");
+    eaw::ObjectType xwing;
+    xwing.name = "X_WING";
+    xwing.properties = {"Unit"};
+    sim.sim().addType(std::move(xwing));
+    int unitId = sim.sim().spawnUnit("X_WING", rebel.id, {5, 10, 0});
+
+    // Wall along world x=60 from y=0 to y=40 (grid cellSize=2).
+    eaw::PathGrid& g = sim.pathGrid();
+    int wallX = g.cellOf(60.0);
+    for (int y = 0; y <= 20; ++y) g.setBlocked(wallX, y);
+
+    // Order the unit to move across the wall.
+    eaw::GameObject* unit = sim.sim().object(unitId);
+    unit->hasMoveTarget = true;
+    unit->moveTarget = {100, 10, 0};
+
+    bool detoured = false;
+    for (int i = 0; i < 600; ++i) {
+        sim.tick(1.0 / 30.0);
+        unit = sim.sim().object(unitId);
+        if (!unit) break;
+        // Crossed the wall line? Then it must have left the blocked y band.
+        if (unit->position.x > 60.0 && (unit->position.y < 0.0 || unit->position.y > 40.0)) {
+            detoured = true;
+        }
+    }
+    check(detoured, "unit detoured around the wall");
+    unit = sim.sim().object(unitId);
+    check(unit && !unit->hasMoveTarget, "unit reached its destination");
+    check(unit && unit->position.x > 99.0, "unit crossed to the far side");
+}
+
 } // namespace
 
 int main() {
@@ -202,6 +239,7 @@ int main() {
     testEndToEndPump();
     testParallelMoveToIntegration();
     testParallelDeterminism();
+    testUnitNavigatesAroundObstacle();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;

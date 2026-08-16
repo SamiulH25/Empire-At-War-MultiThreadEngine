@@ -26,6 +26,8 @@ add_library(eaw_core STATIC
     core/meg_manager.cpp
     core/object_model.cpp
     core/event_system.cpp
+    core/path_grid.cpp
+    core/pathfinding.cpp
     core/pg_bindings.cpp
     core/pg_object_bindings.cpp
     core/pg_event_bindings.cpp
@@ -114,6 +116,12 @@ add_executable(combat_tests
 )
 target_link_libraries(combat_tests PRIVATE eaw_core)
 add_test(NAME combat_tests COMMAND combat_tests)
+
+add_executable(pathfinding_tests
+    tests/test_pathfinding.cpp
+)
+target_link_libraries(pathfinding_tests PRIVATE eaw_core)
+add_test(NAME pathfinding_tests COMMAND pathfinding_tests)
 
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test

@@ -83,6 +83,10 @@ struct GameObject {
     bool hasMoveTarget = false;
     Vec3 moveTarget;               // set by Move_To; sim integrates toward it
     double moveSpeed = 50.0;       // units per second
+    // Path-following state (filled by the pathfinding step).
+    std::vector<Vec3> path;        // remaining waypoints (world coords)
+    size_t pathIndex = 0;
+    int pathSearchId = 0;          // active pathfinding search (0 = none)
     // Combat state.
     double attackCooldown = 0.0;   // seconds until the next shot is allowed
     double pendingDamage = 0.0;    // damage accumulated this tick (apply pass)
