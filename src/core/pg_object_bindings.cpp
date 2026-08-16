@@ -1,0 +1,685 @@
+#include "core/pg_object_bindings.h"
+
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+extern "C" {
+#include "lua.h"
+#include "lauxlib.h"
+}
+
+namespace eaw {
+
+namespace {
+
+// ---- wrapper userdata ---------------------------------------------------
+// Each wrapper is userdata containing {kind, id} + a back-pointer to the sim.
+// kinds: 1 = GameObject, 2 = Player, 3 = ObjectType, 4 = Position (id unused)
+
+enum class WrapperKind : int { Object = 1, Player = 2, Type = 3, Position = 4 };
+
+struct Wrapper {
+    SimState* sim;
+    WrapperKind kind;
+    int id;
+    // Position wrappers carry their coords inline.
+    Vec3 pos;
+};
+
+const char* kWrapperMeta = "LuaWrapperMetaTable";
+
+Wrapper* checkWrapper(lua_State* s, int idx) {
+    return static_cast<Wrapper*>(luaL_checkudata(s, idx, kWrapperMeta));
+}
+
+// The global query functions receive the SimState as a lightuserdata upvalue.
+SimState* simFromUpvalue(lua_State* s, int idx) {
+    return static_cast<SimState*>(lua_touserdata(s, lua_upvalueindex(idx)));
+}
+
+// Pushes a wrapper userdata of the given kind/id.
+void pushWrapper(lua_State* s, SimState* sim, WrapperKind kind, int id) {
+    Wrapper* w = static_cast<Wrapper*>(lua_newuserdata(s, sizeof(Wrapper)));
+    w->sim = sim;
+    w->kind = kind;
+    w->id = id;
+    luaL_getmetatable(s, kWrapperMeta);
+    lua_setmetatable(s, -2);
+}
+
+// Pushes a wrapper for a game object (or nil if not found/alive=false).
+void pushObject(lua_State* s, SimState* sim, const GameObject* o) {
+    if (!o || !o->alive) {
+        lua_pushnil(s);
+        return;
+    }
+    pushWrapper(s, sim, WrapperKind::Object, o->id);
+}
+
+// ---- shared helpers -----------------------------------------------------
+
+const GameObject* wrapperObject(lua_State* s, Wrapper* w) {
+    if (w->kind != WrapperKind::Object) return nullptr;
+    return w->sim->object(w->id);
+}
+
+// ---- global queries -----------------------------------------------------
+
+int findPlayer(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    const char* name = luaL_checkstring(s, 1);
+    const Player* p = sim->findPlayer(name);
+    if (!p) { lua_pushnil(s); return 1; }
+    pushWrapper(s, sim, WrapperKind::Player, p->id);
+    return 1;
+}
+
+int findObjectType(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    const char* name = luaL_checkstring(s, 1);
+    const ObjectType* t = sim->type(name);
+    if (!t) { lua_pushnil(s); return 1; }
+    // Look up (or lazily assign) the type's wrapper id. The types table
+    // stays on the stack throughout so the lazy branch can write to it.
+    lua_getfield(s, LUA_REGISTRYINDEX, "__PgTypeIds"); // [name, types]
+    lua_pushstring(s, name);
+    lua_gettable(s, -2);                   // [name, types, id]
+    if (lua_isnil(s, -1)) {
+        lua_pop(s, 1);                     // [name, types]
+        lua_getfield(s, LUA_REGISTRYINDEX, "__PgTypeCounter");
+        int id = static_cast<int>(lua_tointeger(s, -1));
+        lua_pop(s, 1);
+        lua_pushinteger(s, id + 1);
+        lua_setfield(s, LUA_REGISTRYINDEX, "__PgTypeCounter");
+        // names[id] = name
+        lua_getfield(s, LUA_REGISTRYINDEX, "__PgTypeNames"); // [name, types, names]
+        lua_pushinteger(s, id + 1);
+        lua_pushstring(s, name);
+        lua_settable(s, -3);               // [name, types, names]
+        lua_pop(s, 1);                     // [name, types]
+        // types[name] = id+1
+        lua_pushstring(s, name);           // [name, types, name]
+        lua_pushinteger(s, id + 1);        // [name, types, name, id+1]
+        lua_settable(s, -3);               // [name, types]
+        lua_pushinteger(s, id + 1);        // [name, types, id]
+    }
+    int id = static_cast<int>(lua_tointeger(s, -1));
+    lua_pop(s, 3);                         // [name, types, id] -> []
+    pushWrapper(s, sim, WrapperKind::Type, id);
+    return 1;
+}
+
+// Helper: pushes a list of object wrappers.
+void pushObjectList(lua_State* s, SimState* sim, const std::vector<const GameObject*>& objs) {
+    lua_createtable(s, static_cast<int>(objs.size()), 0);
+    int n = 1;
+    for (const GameObject* o : objs) {
+        pushObject(s, sim, o);
+        lua_rawseti(s, -2, n++);
+    }
+}
+
+int findAllObjectsOfType(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    const char* x = luaL_checkstring(s, 1);
+    // 1-arg: type name, property flag, or category. Try type name first,
+    // then category (pipe-separated categories match any).
+    std::vector<const GameObject*> objs = sim->objectsOfType(x);
+    if (objs.empty()) objs = sim->objectsOfCategory(x);
+    pushObjectList(s, sim, objs);
+    return 1;
+}
+
+int findFirstObject(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    const char* typeName = luaL_checkstring(s, 1);
+    auto objs = sim->objectsOfType(typeName);
+    pushObject(s, sim, objs.empty() ? nullptr : objs.front());
+    return 1;
+}
+
+int findNearest(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    Wrapper* from = checkWrapper(s, 1);
+    const char* typeName = luaL_checkstring(s, 2);
+    const GameObject* origin = wrapperObject(s, from);
+    if (!origin) { lua_pushnil(s); return 1; }
+    pushObject(s, sim, sim->nearestObject(origin->position, typeName));
+    return 1;
+}
+
+// ---- wrapper methods (object) -------------------------------------------
+
+int objGetHull(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, o->hull);
+    return 1;
+}
+
+int objGetShield(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, o->shield);
+    return 1;
+}
+
+int objGetHealth(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, o->hull);
+    return 1;
+}
+
+int objGetEnergy(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, o->energy);
+    return 1;
+}
+
+int objGetOwner(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    const Player* p = w->sim->player(o->playerId);
+    if (!p) { lua_pushnil(s); return 1; }
+    pushWrapper(s, w->sim, WrapperKind::Player, p->id);
+    return 1;
+}
+
+int objGetType(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    // Look up the type wrapper by name.
+    lua_getfield(s, LUA_REGISTRYINDEX, "__PgTypeIds");
+    lua_pushstring(s, o->typeName.c_str());
+    lua_gettable(s, -2);
+    int id = static_cast<int>(lua_tointeger(s, -1));
+    lua_pop(s, 2);
+    if (id == 0) {
+        // type not yet wrapped — build it via Find_Object_Type logic
+        lua_getglobal(s, "Find_Object_Type");
+        lua_pushstring(s, o->typeName.c_str());
+        lua_call(s, 1, 1);
+        return 1;
+    }
+    pushWrapper(s, w->sim, WrapperKind::Type, id);
+    return 1;
+}
+
+int objGetId(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    lua_pushinteger(s, w->id);
+    return 1;
+}
+
+int objGetPosition(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    pushWrapper(s, w->sim, WrapperKind::Position, 0);
+    Wrapper* pw = static_cast<Wrapper*>(lua_touserdata(s, -1));
+    pw->pos = o->position;
+    return 1;
+}
+
+int objGetDistance(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    Wrapper* other = checkWrapper(s, 2);
+    const GameObject* o2 = wrapperObject(s, other);
+    if (!o2) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, o->position.distanceTo(o2->position));
+    return 1;
+}
+
+int objIsCategory(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    const char* cat = luaL_checkstring(s, 2);
+    if (!o) { lua_pushboolean(s, 0); return 1; }
+    const ObjectType* t = w->sim->type(o->typeName);
+    bool found = false;
+    if (t) {
+        // pipe-separated categories: "Frigate | Capital" matches any
+        std::string cats(cat);
+        size_t start = 0;
+        while (start <= cats.size()) {
+            size_t pipe = cats.find('|', start);
+            std::string one = cats.substr(start, pipe == std::string::npos ? std::string::npos : pipe - start);
+            // trim
+            size_t b = one.find_first_not_of(" \t");
+            size_t e = one.find_last_not_of(" \t");
+            if (b != std::string::npos) one = one.substr(b, e - b + 1);
+            for (const auto& c : t->categories) {
+                if (c == one) { found = true; break; }
+            }
+            if (found) break;
+            if (pipe == std::string::npos) break;
+            start = pipe + 1;
+        }
+    }
+    lua_pushboolean(s, found);
+    return 1;
+}
+
+int objHasProperty(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    const char* prop = luaL_checkstring(s, 2);
+    if (!o) { lua_pushboolean(s, 0); return 1; }
+    const ObjectType* t = w->sim->type(o->typeName);
+    bool found = false;
+    if (t) {
+        for (const auto& p : t->properties) {
+            if (p == prop) { found = true; break; }
+        }
+    }
+    lua_pushboolean(s, found);
+    return 1;
+}
+
+int objIsValid(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    lua_pushboolean(s, o != nullptr);
+    return 1;
+}
+
+int objIsHero(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushboolean(s, 0); return 1; }
+    const ObjectType* t = w->sim->type(o->typeName);
+    lua_pushboolean(s, t && t->hero);
+    return 1;
+}
+
+int objIsSelectable(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    lua_pushboolean(s, o ? o->selectable : 0);
+    return 1;
+}
+
+int objGetName(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    lua_pushstring(s, o->typeName.c_str());
+    return 1;
+}
+
+int objGetGarrisonedUnits(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    lua_createtable(s, static_cast<int>(o->garrisonedUnits.size()), 0);
+    int n = 1;
+    for (int id : o->garrisonedUnits) {
+        pushObject(s, w->sim, w->sim->object(id));
+        lua_rawseti(s, -2, n++);
+    }
+    return 1;
+}
+
+int objHasGarrison(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    lua_pushboolean(s, o && !o->garrisonedUnits.empty());
+    return 1;
+}
+
+int objIsInGarrison(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    lua_pushboolean(s, o ? o->inGarrison : 0);
+    return 1;
+}
+
+int objGetTimeTillDead(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    // Hull is normalized 0..1; no damage model yet — return hull as a proxy.
+    lua_pushnumber(s, o->hull);
+    return 1;
+}
+
+// ---- wrapper methods (player) -------------------------------------------
+
+int playerGetId(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    lua_pushinteger(s, w->id);
+    return 1;
+}
+
+int playerGetName(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const Player* p = w->sim->player(w->id);
+    if (!p) { lua_pushnil(s); return 1; }
+    lua_pushstring(s, p->name.c_str());
+    return 1;
+}
+
+int playerGetFactionName(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const Player* p = w->sim->player(w->id);
+    if (!p) { lua_pushnil(s); return 1; }
+    lua_pushstring(s, p->factionName.c_str());
+    return 1;
+}
+
+int playerGetDifficulty(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const Player* p = w->sim->player(w->id);
+    if (!p) { lua_pushnil(s); return 1; }
+    lua_pushstring(s, p->difficulty.c_str());
+    return 1;
+}
+
+int playerIsHuman(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const Player* p = w->sim->player(w->id);
+    lua_pushboolean(s, p ? p->human : 0);
+    return 1;
+}
+
+int playerGetTechLevel(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const Player* p = w->sim->player(w->id);
+    if (!p) { lua_pushnil(s); return 1; }
+    lua_pushinteger(s, p->techLevel);
+    return 1;
+}
+
+int playerGetCredits(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const Player* p = w->sim->player(w->id);
+    if (!p) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, p->credits);
+    return 1;
+}
+
+// ---- wrapper methods (type) ---------------------------------------------
+
+// Pushes the type name for a Type wrapper's id onto the stack. Returns the
+// name (valid until the stack is modified) or nullptr if unknown.
+const char* typeNameFromId(lua_State* s, Wrapper* w) {
+    lua_getfield(s, LUA_REGISTRYINDEX, "__PgTypeNames");
+    lua_pushinteger(s, w->id);
+    lua_gettable(s, -2);                   // [names, name]
+    const char* n = lua_tostring(s, -1);
+    if (!n) {
+        lua_pop(s, 2);
+        return nullptr;
+    }
+    return n;
+}
+
+int typeGetName(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const char* n = typeNameFromId(s, w);
+    if (!n) { lua_pushnil(s); return 1; }
+    // stack: [self, names, name] — replace self with name, drop names
+    lua_replace(s, 1);                     // [name, names]
+    lua_pop(s, 1);                         // [name]
+    return 1;
+}
+
+const ObjectType* typeFromWrapper(lua_State* s, Wrapper* w) {
+    const char* n = typeNameFromId(s, w);
+    if (!n) return nullptr;
+    const ObjectType* t = w->sim->type(n);
+    lua_pop(s, 2);                         // drop names, name
+    return t;
+}
+
+int typeIsHero(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const ObjectType* t = typeFromWrapper(s, w);
+    lua_pushboolean(s, t ? t->hero : 0);
+    return 1;
+}
+
+int typeGetBuildCost(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const ObjectType* t = typeFromWrapper(s, w);
+    if (!t) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, t->buildCost);
+    return 1;
+}
+
+int typeGetTechLevel(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const ObjectType* t = typeFromWrapper(s, w);
+    if (!t) { lua_pushnil(s); return 1; }
+    lua_pushinteger(s, t->techLevel);
+    return 1;
+}
+
+int typeGetMaxRange(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const ObjectType* t = typeFromWrapper(s, w);
+    if (!t) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, t->maxRange);
+    return 1;
+}
+
+int typeGetMinRange(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const ObjectType* t = typeFromWrapper(s, w);
+    if (!t) { lua_pushnil(s); return 1; }
+    lua_pushnumber(s, t->minRange);
+    return 1;
+}
+
+int typeIsAffectedByMissileShield(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const ObjectType* t = typeFromWrapper(s, w);
+    lua_pushboolean(s, t ? t->affectedByMissileShield : 0);
+    return 1;
+}
+
+int typeIsAffectedByLaserDefense(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const ObjectType* t = typeFromWrapper(s, w);
+    lua_pushboolean(s, t ? t->affectedByLaserDefense : 0);
+    return 1;
+}
+
+// ---- position methods ----------------------------------------------------
+
+int posGetXYZ(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    lua_pushnumber(s, w->pos.x);
+    lua_pushnumber(s, w->pos.y);
+    lua_pushnumber(s, w->pos.z);
+    return 3;
+}
+
+// ---- __index dispatch ----------------------------------------------------
+// The shared LuaWrapperMetaTable.__index receives (wrapper, key). We look up
+// the method by name in a per-kind method table and return it.
+
+struct MethodEntry {
+    const char* name;
+    lua_CFunction fn;
+};
+
+const MethodEntry kObjectMethods[] = {
+    {"Get_Hull", objGetHull},
+    {"Get_Health", objGetHealth},
+    {"Get_Shield", objGetShield},
+    {"Get_Energy", objGetEnergy},
+    {"Get_Owner", objGetOwner},
+    {"Get_Type", objGetType},
+    {"Get_ID", objGetId},
+    {"Get_Position", objGetPosition},
+    {"Get_Distance", objGetDistance},
+    {"Is_Category", objIsCategory},
+    {"Has_Property", objHasProperty},
+    {"Is_Valid", objIsValid},
+    {"Is_Hero", objIsHero},
+    {"Is_Selectable", objIsSelectable},
+    {"Get_Name", objGetName},
+    {"Get_Garrisoned_Units", objGetGarrisonedUnits},
+    {"Has_Garrison", objHasGarrison},
+    {"Is_In_Garrison", objIsInGarrison},
+    {"Get_Time_Till_Dead", objGetTimeTillDead},
+};
+
+const MethodEntry kPlayerMethods[] = {
+    {"Get_ID", playerGetId},
+    {"Get_Name", playerGetName},
+    {"Get_Faction_Name", playerGetFactionName},
+    {"Get_Difficulty", playerGetDifficulty},
+    {"Is_Human", playerIsHuman},
+    {"Get_Tech_Level", playerGetTechLevel},
+    {"Get_Credits", playerGetCredits},
+};
+
+const MethodEntry kTypeMethods[] = {
+    {"Get_Name", typeGetName},
+    {"Is_Hero", typeIsHero},
+    {"Get_Build_Cost", typeGetBuildCost},
+    {"Get_Tech_Level", typeGetTechLevel},
+    {"Get_Max_Range", typeGetMaxRange},
+    {"Get_Min_Range", typeGetMinRange},
+    {"Is_Affected_By_Missile_Shield", typeIsAffectedByMissileShield},
+    {"Is_Affected_By_Laser_Defense", typeIsAffectedByLaserDefense},
+};
+
+const MethodEntry kPositionMethods[] = {
+    {"Get_XYZ", posGetXYZ},
+};
+
+const MethodEntry* methodsFor(WrapperKind kind) {
+    switch (kind) {
+        case WrapperKind::Object: return kObjectMethods;
+        case WrapperKind::Player: return kPlayerMethods;
+        case WrapperKind::Type: return kTypeMethods;
+        case WrapperKind::Position: return kPositionMethods;
+    }
+    return nullptr;
+}
+
+int methodCountFor(WrapperKind kind) {
+    switch (kind) {
+        case WrapperKind::Object: return static_cast<int>(sizeof(kObjectMethods) / sizeof(kObjectMethods[0]));
+        case WrapperKind::Player: return static_cast<int>(sizeof(kPlayerMethods) / sizeof(kPlayerMethods[0]));
+        case WrapperKind::Type: return static_cast<int>(sizeof(kTypeMethods) / sizeof(kTypeMethods[0]));
+        case WrapperKind::Position: return static_cast<int>(sizeof(kPositionMethods) / sizeof(kPositionMethods[0]));
+    }
+    return 0;
+}
+
+int wrapperIndex(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const char* key = luaL_checkstring(s, 2);
+    const MethodEntry* methods = methodsFor(w->kind);
+    int count = methodCountFor(w->kind);
+    for (int i = 0; i < count; ++i) {
+        if (std::strcmp(methods[i].name, key) == 0) {
+            lua_pushcfunction(s, methods[i].fn);
+            return 1;
+        }
+    }
+    lua_pushnil(s);
+    return 1;
+}
+
+int wrapperToString(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    switch (w->kind) {
+        case WrapperKind::Object:
+            lua_pushfstring(s, "GameObjectWrapper(%d)", w->id);
+            break;
+        case WrapperKind::Player:
+            lua_pushfstring(s, "PlayerWrapper(%d)", w->id);
+            break;
+        case WrapperKind::Type:
+            lua_pushfstring(s, "GameObjectTypeWrapper(%d)", w->id);
+            break;
+        case WrapperKind::Position:
+            lua_pushfstring(s, "PositionWrapper");
+            break;
+    }
+    return 1;
+}
+
+// ---- registration --------------------------------------------------------
+
+void reg(lua_State* s, const char* name, lua_CFunction fn) {
+    lua_register(s, name, fn);
+}
+
+} // namespace
+
+void registerObjectBindings(LuaHost& lua, SimState& sim) {
+    lua_State* s = lua.state();
+
+    // Shared wrapper metatable.
+    if (luaL_newmetatable(s, kWrapperMeta)) {
+        lua_pushcfunction(s, wrapperIndex);
+        lua_setfield(s, -2, "__index");
+        lua_pushcfunction(s, wrapperToString);
+        lua_setfield(s, -2, "__tostring");
+    }
+    lua_pop(s, 1);
+
+    // Type id tables (name <-> id) and the type counter.
+    lua_newtable(s);
+    lua_setfield(s, LUA_REGISTRYINDEX, "__PgTypeIds");
+    lua_newtable(s);
+    lua_setfield(s, LUA_REGISTRYINDEX, "__PgTypeNames");
+    lua_pushinteger(s, 0);
+    lua_setfield(s, LUA_REGISTRYINDEX, "__PgTypeCounter");
+
+    // Seed the type id tables from the sim's registered types.
+    int id = 0;
+    for (const std::string& name : sim.typeNames()) {
+        ++id;
+        lua_getfield(s, LUA_REGISTRYINDEX, "__PgTypeIds");
+        lua_pushstring(s, name.c_str());
+        lua_pushinteger(s, id);
+        lua_settable(s, -3);
+        lua_pop(s, 1);
+        lua_getfield(s, LUA_REGISTRYINDEX, "__PgTypeNames");
+        lua_pushinteger(s, id);
+        lua_pushstring(s, name.c_str());
+        lua_settable(s, -3);
+        lua_pop(s, 1);
+    }
+    lua_pushinteger(s, id);
+    lua_setfield(s, LUA_REGISTRYINDEX, "__PgTypeCounter");
+
+    // Global queries. Each gets the sim as a lightuserdata upvalue.
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, findPlayer, 1);
+    lua_setglobal(s, "Find_Player");
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, findObjectType, 1);
+    lua_setglobal(s, "Find_Object_Type");
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, findAllObjectsOfType, 1);
+    lua_setglobal(s, "Find_All_Objects_Of_Type");
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, findFirstObject, 1);
+    lua_setglobal(s, "Find_First_Object");
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, findNearest, 1);
+    lua_setglobal(s, "Find_Nearest");
+}
+
+} // namespace eaw

@@ -70,9 +70,37 @@ Key config files confirmed present: `DATA\XML\GAMECONSTANTS.XML` (pathfinding/AI
 
 1. ~~Document .meg format~~ — DONE (Petrolution spec + our reader)
 2. ~~Catalog the game data surface~~ — DONE (config.meg: 627 XML, 324 Lua)
-3. Download/install Thrawn's Revenge (Steam Workshop) and inspect its file layout — pending
-4. Extract a mod's XML and Lua, catalog which engine bindings it uses — pending
+3. ~~Inventory the engine binding surface from the game's own Lua libraries~~ — DONE (2026-08-16, see below)
+4. Extract a mod's XML and Lua, catalog which engine bindings it uses — pending (needs a workshop mod installed)
 5. Determine how the 64-bit port resolves mods (does it look in `Mods/`?) — pending
+
+## Engine Binding Surface (from the game's own Lua libraries, 2026-08-16)
+
+The game ships its AI/story Lua as **precompiled bytecode** (custom-fork Lua 5.1, doc 03).
+The bytecode string tables are readable, so the engine binding surface the game's own
+library layer (`PGBASE`, `PGCOMMANDS`, `PGAICOMMANDS`, `PGSPAWNUNITS`, `PGTASKFORCE`,
+`PGMOVEUNITS`, `PGEVENTS`, `PGSTATEMACHINE`, `PGSTORYMODE`, `PGINTERVENTIONS`,
+`PGBASEDEFINITIONS`, `PGDEBUG`) calls is fully inventoried: **~137 distinct engine
+bindings** (full list regenerable via `scripts/probe_lua_bindings.py` + `binding_gap.py`
+against extracted library files).
+
+These are the names mod scripts reach through the documented PG* wrapper API — the
+**byte-compatible Lua surface the engine must register** (contract element 2). Grouped:
+
+| Group | Examples | Count |
+|---|---|---|
+| Object queries | `Get_Hull`, `Get_Shield`, `Get_Owner`, `Get_Type`, `Get_Name`, `Get_ID`, `Get_Distance`, `Get_Unit_Table`, `Get_Garrisoned_Units` | ~20 |
+| Object predicates | `Is_Category`, `Is_Good_Against`, `Is_Hero`, `Has_Ability`, `Has_Property`, `Is_A_Taskforce`, `Is_On_Diversion` | ~20 |
+| Search | `Find_All_Objects_Of_Type`, `Find_Object_Type`, `Find_Nearest`, `FindDeadlyEnemy`, `FindTarget`, `FindPlanet`, `FindStageArea` | ~12 |
+| Orders/actions | `Move_To`, `Attack_Target`, `Attack_Move`, `Formation_Attack`, `Release_Unit`, `Lock_Current_Orders`, `Garrison`, `Leave_Garrison`, `Spawn_Unit`, `Reinforce_Unit` | ~25 |
+| Abilities | `Activate_Ability`, `Try_Ability`, `Use_Ability_If_Able`, `Is_Ability_Active`, `Is_Ability_Ready`, `Has_Ability` | ~8 |
+| Events/timers | `Register_Attacked_Event`, `Register_Death_Event`, `Register_Timer`, `Cancel_Timer`, `Process_*`, `PumpEvents`, `Event_Object_In_Range` | ~15 |
+| AI targeting | `Set_Targeting_Priorities`, `Set_Contrast_Values`, `Set_Land_AI_Targeting_Priorities`, `Should_Switch_Weapons`, `Should_Crush` | ~8 |
+| Misc | `Get_Difficulty`, `Get_Game_Mode`, `Get_Faction_Name`, `Get_Tech_Level`, `Get_Build_Cost`, `Story_Event_Trigger`, `PlayerSpecificName` | ~15 |
+
+**Current engine coverage** (`src/core/pg_bindings.cpp`): 12 of ~137 — the core thread/
+time/global-value surface. The rest need the sim object model (unit/player DB) behind
+them; they are the next implementation target.
 
 ## Open Questions
 

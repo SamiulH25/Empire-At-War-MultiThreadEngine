@@ -156,6 +156,45 @@ void testThreadIsActive() {
     lua_pop(lua.state(), 1);
 }
 
+void testDottedThreadApi() {
+    eaw::LuaHost lua;
+    eaw::registerPgBindings(lua);
+    lua.runScript(
+        "function w() coroutine.yield() end\n"
+        "a = Thread.Create('w')\n"
+        "b = Create_Thread('w')\n"
+        "active = Thread.Is_Thread_Active(a)\n");
+    lua_getglobal(lua.state(), "a");
+    check(lua_tointeger(lua.state(), -1) >= 1, "Thread.Create returns id");
+    lua_pop(lua.state(), 1);
+    lua_getglobal(lua.state(), "active");
+    check(lua_toboolean(lua.state(), -1) == 1, "Thread.Is_Thread_Active works");
+    lua_pop(lua.state(), 1);
+    // Kill via the dotted form and the Create_Thread alias.
+    lua.runScript("Thread.Kill(a)\nCreate_Thread.Kill(b)\n");
+    lua.runScript(
+        "c = Thread.Create('w')\n"
+        "id = Thread.Get_Current_ID()\n");
+    lua_getglobal(lua.state(), "id");
+    check(lua_tointeger(lua.state(), -1) == 0, "Get_Current_ID is 0 on main thread");
+    lua_pop(lua.state(), 1);
+}
+
+void testGetThreadIdInsideThread() {
+    eaw::LuaHost lua;
+    eaw::registerPgBindings(lua);
+    lua.runScript(
+        "seen = -1\n"
+        "function w()\n"
+        "  seen = Thread.Get_Current_ID()\n"
+        "end\n"
+        "id = Create_Thread('w')\n");
+    eaw::pumpThreads(lua.state());
+    lua_getglobal(lua.state(), "seen");
+    check(lua_tointeger(lua.state(), -1) == 1, "Get_Current_ID inside thread");
+    lua_pop(lua.state(), 1);
+}
+
 void testModStyleScriptWithThreads() {
     // A script in the style of the game's AI plans: defines a worker,
     // spawns it via Create_Thread, uses GlobalValue.
@@ -186,6 +225,8 @@ int main() {
     testYieldPump();
     testThreadKill();
     testThreadIsActive();
+    testDottedThreadApi();
+    testGetThreadIdInsideThread();
     testModStyleScriptWithThreads();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);

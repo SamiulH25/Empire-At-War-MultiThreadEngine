@@ -146,6 +146,21 @@ int threadKill(lua_State* s) {
     return 0;
 }
 
+int getCurrentThreadId(lua_State* s) {
+    lua_getfield(s, LUA_REGISTRYINDEX, "__PgCurrentThread");
+    lua_Integer id = lua_tointeger(s, -1);
+    lua_pop(s, 1);
+    lua_pushinteger(s, id);
+    return 1;
+}
+
+// __call metamethod for the Create_Thread/Thread tables: the table itself is
+// arg 1, so shift the real args down by one before delegating to createThread.
+int threadTableCall(lua_State* s) {
+    lua_remove(s, 1);                      // drop the table
+    return createThread(s);
+}
+
 // ---- misc ------------------------------------------------------------------
 
 int getGameMode(lua_State* s) {
@@ -191,6 +206,9 @@ void pumpThreads(lua_State* s) {
                 nargs = static_cast<int>(lua_tointeger(s, -1));
                 lua_pop(s, 3);             // [threads, dead, key, thread]
             }
+            // Track the current thread id for GetThreadID/Get_Current_ID.
+            lua_pushvalue(s, -2);          // [threads, dead, key, thread, key]
+            lua_setfield(s, LUA_REGISTRYINDEX, "__PgCurrentThread");
             int status = lua_resume(co, nargs);
             if (status != 0 && status != LUA_YIELD) {
                 std::string msg = lua_tostring(co, -1) ? lua_tostring(co, -1) : "unknown coroutine error";
@@ -234,6 +252,8 @@ void registerPgBindings(LuaHost& lua) {
     lua_setfield(s, LUA_REGISTRYINDEX, "__PgThreadCounter");
     lua_newtable(s);
     lua_setfield(s, LUA_REGISTRYINDEX, "__PgThreadNargs");
+    lua_pushinteger(s, 0);
+    lua_setfield(s, LUA_REGISTRYINDEX, "__PgCurrentThread");
     lua_pushnumber(s, 0.0);
     lua_setfield(s, LUA_REGISTRYINDEX, "__PgEngineTime");
 
@@ -241,9 +261,31 @@ void registerPgBindings(LuaHost& lua) {
     reg(s, "GlobalValue_Get", globalValueGet);
     reg(s, "GlobalValue_Set", globalValueSet);
 
-    // Threads (Create_Thread, Thread, Thread.Create...)
-    reg(s, "Create_Thread", createThread);
-    reg(s, "Thread", createThread);
+    // Threads: Create_Thread/Thread are callable tables (__call = createThread)
+    // with dotted fields, matching the game: Create_Thread(name,param) AND
+    // Create_Thread.Kill(id) / Thread.Create(...) / Thread.Is_Thread_Active(...)
+    auto makeThreadTable = [&](const char* globalName, bool withCreate) {
+        lua_newtable(s);
+        lua_pushcfunction(s, threadKill);
+        lua_setfield(s, -2, "Kill");
+        lua_pushcfunction(s, threadIsActive);
+        lua_setfield(s, -2, "Is_Thread_Active");
+        if (withCreate) {
+            lua_pushcfunction(s, createThread);
+            lua_setfield(s, -2, "Create");
+        }
+        lua_pushcfunction(s, getCurrentThreadId);
+        lua_setfield(s, -2, "Get_Current_ID");
+        lua_newtable(s);                   // metatable
+        lua_pushcfunction(s, threadTableCall);
+        lua_setfield(s, -2, "__call");
+        lua_setmetatable(s, -2);
+        lua_setglobal(s, globalName);
+    };
+    makeThreadTable("Create_Thread", false);
+    makeThreadTable("Thread", true);
+
+    // Underscore aliases from the game's binding table.
     reg(s, "Thread_Is_Thread_Active", threadIsActive);
     reg(s, "Thread_Kill", threadKill);
 
