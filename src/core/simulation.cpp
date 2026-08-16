@@ -192,6 +192,7 @@ void Simulation::tick(double dt) {
     }
     stepEconomy(dt);
     stepGalactic(dt);
+    sim().tickAbilities(dt);
     snapshotPositions();
     stepPathfinding();
     updateObjects(dt);

@@ -91,6 +91,112 @@ int SimState::buildUnit(int playerId, const std::string& typeName, const Vec3& p
     return spawnUnit(typeName, playerId, pos);
 }
 
+// --- abilities -----------------------------------------------------------
+
+const ObjectType::Ability* SimState::abilityDef(int objectId,
+                                                const std::string& name) const {
+    const GameObject* o = object(objectId);
+    if (!o) return nullptr;
+    const ObjectType* t = type(o->typeName);
+    if (!t) return nullptr;
+    for (const auto& a : t->abilities) {
+        if (a.name == name) return &a;
+    }
+    return nullptr;
+}
+
+bool SimState::hasAbility(int objectId, const std::string& name) const {
+    return abilityDef(objectId, name) != nullptr;
+}
+
+// Finds (or lazily creates) the runtime state entry for an ability.
+GameObject::AbilityState* abilityState(GameObject* o, const std::string& name) {
+    for (auto& [n, st] : o->abilityStates) {
+        if (n == name) return &st;
+    }
+    o->abilityStates.emplace_back(name, GameObject::AbilityState{});
+    return &o->abilityStates.back().second;
+}
+
+bool SimState::isAbilityReady(int objectId, const std::string& name) const {
+    const GameObject* o = object(objectId);
+    if (!o || !abilityDef(objectId, name)) return false;
+    for (const auto& [n, st] : o->abilityStates) {
+        if (n == name) return st.cooldownRemaining <= 0.0;
+    }
+    return true; // never used -> ready
+}
+
+bool SimState::isAbilityActive(int objectId, const std::string& name) const {
+    const GameObject* o = object(objectId);
+    if (!o) return false;
+    for (const auto& [n, st] : o->abilityStates) {
+        if (n == name) return st.active;
+    }
+    return false;
+}
+
+double SimState::abilityCooldownLeft(int objectId, const std::string& name) const {
+    const GameObject* o = object(objectId);
+    if (!o) return 0.0;
+    for (const auto& [n, st] : o->abilityStates) {
+        if (n == name) return st.cooldownRemaining;
+    }
+    return 0.0;
+}
+
+bool SimState::activateAbility(int objectId, const std::string& name, int targetId) {
+    GameObject* o = object(objectId);
+    const ObjectType::Ability* def = abilityDef(objectId, name);
+    if (!o || !def || !o->alive) return false;
+    GameObject::AbilityState* st = abilityState(o, name);
+    if (st->cooldownRemaining > 0.0) return false; // on cooldown
+    // Target checks: must be a live enemy within range (if targeted).
+    const GameObject* target = targetId ? object(targetId) : nullptr;
+    if (def->requiresTarget) {
+        if (!target || !target->alive) return false;
+        if (isAlly(o->playerId, target->playerId)) return false;
+        double d = o->position.distanceTo(target->position);
+        if (def->range > 0.0 && d > def->range) return false;
+    }
+    // Apply the effect: damage the target (or self for untargeted).
+    if (target && def->damage > 0.0 && !target->invulnerable) {
+        GameObject* t = object(targetId);
+        double shieldAbsorb = std::min(t->shield, def->damage);
+        t->shield -= shieldAbsorb;
+        t->hull = std::max(0.0, t->hull - (def->damage - shieldAbsorb));
+        t->wasDamagedThisTick = true;
+        if (t->hull == 0.0) t->alive = false;
+    }
+    st->cooldownRemaining = def->cooldown;
+    st->active = true;
+    return true;
+}
+
+void SimState::cancelAbility(int objectId, const std::string& name) {
+    GameObject* o = object(objectId);
+    if (!o) return;
+    for (auto& [n, st] : o->abilityStates) {
+        if (n == name) { st.active = false; return; }
+    }
+}
+
+void SimState::resetAbilityCooldown(int objectId, const std::string& name) {
+    GameObject* o = object(objectId);
+    if (!o) return;
+    for (auto& [n, st] : o->abilityStates) {
+        if (n == name) { st.cooldownRemaining = 0.0; return; }
+    }
+}
+
+void SimState::tickAbilities(double dt) {
+    for (auto& [id, o] : objects_) {
+        for (auto& [n, st] : o.abilityStates) {
+            st.cooldownRemaining = std::max(0.0, st.cooldownRemaining - dt);
+        }
+    }
+}
+
 // --- diplomacy ------------------------------------------------------------
 
 void SimState::makeAlly(int a, int b) {

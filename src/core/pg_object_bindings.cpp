@@ -411,6 +411,75 @@ int playerLockTech(lua_State* s) {
     return 0;
 }
 
+// ---- abilities (object methods) ------------------------------------------
+
+int objActivateAbility(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const char* name = luaL_checkstring(s, 2);
+    int targetId = 0;
+    if (!lua_isnoneornil(s, 3) && lua_isuserdata(s, 3)) {
+        Wrapper* t = checkWrapper(s, 3);
+        if (t->kind == WrapperKind::Object) targetId = t->id;
+    }
+    bool ok = w->sim->activateAbility(w->id, name, targetId);
+    lua_pushboolean(s, ok);
+    return 1;
+}
+
+int objTryAbility(lua_State* s) {
+    // Try_Ability: activate if ready; never errors on cooldown.
+    return objActivateAbility(s);
+}
+
+int objUseAbilityIfAble(lua_State* s) {
+    return objActivateAbility(s);
+}
+
+int objHasAbility(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const char* name = luaL_checkstring(s, 2);
+    lua_pushboolean(s, w->sim->hasAbility(w->id, name));
+    return 1;
+}
+
+int objIsAbilityActive(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const char* name = luaL_checkstring(s, 2);
+    lua_pushboolean(s, w->sim->isAbilityActive(w->id, name));
+    return 1;
+}
+
+int objIsAbilityReady(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const char* name = luaL_checkstring(s, 2);
+    lua_pushboolean(s, w->sim->isAbilityReady(w->id, name));
+    return 1;
+}
+
+int objCancelAbility(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const char* name = luaL_checkstring(s, 2);
+    w->sim->cancelAbility(w->id, name);
+    return 0;
+}
+
+int objForceAbilityRecharge(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const char* name = luaL_checkstring(s, 2);
+    w->sim->resetAbilityCooldown(w->id, name);
+    return 0;
+}
+
+int objResetAbilityCounter(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* o = w->sim->object(w->id);
+    if (!o) return 0;
+    for (const auto& [n, st] : o->abilityStates) {
+        w->sim->resetAbilityCooldown(w->id, n);
+    }
+    return 0;
+}
+
 // ---- diplomacy (player methods) ------------------------------------------
 
 int playerMakeAlly(lua_State* s) {
@@ -852,6 +921,16 @@ const MethodEntry kObjectMethods[] = {
     {"Try_Garrison", objTryGarrison},
     {"Leave_Garrison", objLeaveGarrison},
     {"Eject_Garrison", objEjectGarrison},
+    // Abilities
+    {"Activate_Ability", objActivateAbility},
+    {"Try_Ability", objTryAbility},
+    {"Use_Ability_If_Able", objUseAbilityIfAble},
+    {"Has_Ability", objHasAbility},
+    {"Is_Ability_Active", objIsAbilityActive},
+    {"Is_Ability_Ready", objIsAbilityReady},
+    {"Cancel_Ability", objCancelAbility},
+    {"Force_Ability_Recharge", objForceAbilityRecharge},
+    {"Reset_Ability_Counter", objResetAbilityCounter},
 };
 
 const MethodEntry kPlayerMethods[] = {

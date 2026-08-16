@@ -50,6 +50,15 @@ struct ObjectType {
     double attackRate = 1.0;     // shots per second
     double shieldDamageMultiplier = 1.0; // damage vs shields
     double hullDamageMultiplier = 1.0;   // damage vs hull
+    // Abilities (the game's <Unit_Abilities_Data> surface).
+    struct Ability {
+        std::string name;
+        double cooldown = 0.0;    // seconds between uses
+        double range = 0.0;       // max range to target (0 = self/untargeted)
+        double damage = 0.0;      // effect damage (fraction of target hull)
+        bool requiresTarget = false;
+    };
+    std::vector<Ability> abilities;
     // Category membership (Is_Category); pipe-separated in XML like "Frigate | Capital".
     std::vector<std::string> categories;
     // Property flags (Has_Property): "Unit", "Structure", "Hero", ...
@@ -107,6 +116,12 @@ struct GameObject {
     double attackCooldown = 0.0;   // seconds until the next shot is allowed
     double pendingDamage = 0.0;    // damage accumulated this tick (apply pass)
     bool wasDamagedThisTick = false; // for the attacked-event edge detection
+    // Ability runtime state (parallel to ObjectType::abilities by name).
+    struct AbilityState {
+        double cooldownRemaining = 0.0; // seconds until ready
+        bool active = false;            // sustained abilities
+    };
+    std::vector<std::pair<std::string, AbilityState>> abilityStates;
     std::vector<int> garrisonedUnits; // ids of units inside
 };
 
@@ -164,6 +179,30 @@ public:
     // Spends the build cost and spawns the unit at `pos` for the player.
     // Returns the new object id (0 if not affordable/buildable).
     int buildUnit(int playerId, const std::string& typeName, const Vec3& pos);
+
+    // --- abilities ---
+    // The ability definition on an object's type (null if the type has no
+    // such ability).
+    const ObjectType::Ability* abilityDef(int objectId,
+                                          const std::string& name) const;
+    // True if the object's type has the ability.
+    bool hasAbility(int objectId, const std::string& name) const;
+    // True if the ability's cooldown has elapsed.
+    bool isAbilityReady(int objectId, const std::string& name) const;
+    // True if the ability is currently active (sustained abilities).
+    bool isAbilityActive(int objectId, const std::string& name) const;
+    // Seconds until the ability is ready again (0 if ready).
+    double abilityCooldownLeft(int objectId, const std::string& name) const;
+    // Activates the ability on `targetId` (0 = untargeted/self). Applies
+    // range + cooldown checks and the ability's damage. Returns true on
+    // success.
+    bool activateAbility(int objectId, const std::string& name, int targetId);
+    // Cancels a sustained ability.
+    void cancelAbility(int objectId, const std::string& name);
+    // Finishes the ability cooldown (used by Force_Ability_Recharge).
+    void resetAbilityCooldown(int objectId, const std::string& name);
+    // Tick: reduce ability cooldowns. Called from the sim update.
+    void tickAbilities(double dt);
 
     // --- diplomacy ---
     // Makes `a` and `b` allies (symmetric; each stays allied to itself).

@@ -174,6 +174,12 @@ add_executable(mod_compat_tests
 target_link_libraries(mod_compat_tests PRIVATE eaw_core)
 add_test(NAME mod_compat_tests COMMAND mod_compat_tests)
 
+add_executable(ability_tests
+    tests/test_abilities.cpp
+)
+target_link_libraries(ability_tests PRIVATE eaw_core)
+add_test(NAME ability_tests COMMAND ability_tests)
+
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test
     tests/test_real_lua.cpp

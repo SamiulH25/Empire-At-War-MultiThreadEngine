@@ -97,6 +97,22 @@ void UnitDataLoader::loadUnitNode(const XmlNode& unit, bool /*space*/,
     if (!shipClass.empty()) t.categories.push_back(shipClass);
     t.hero = yesNo(childText(unit, "Is_Hero"));
 
+    // Abilities: <Unit_Abilities_Data><Unit_Ability><Type>X</Type>
+    // <Recharge_Seconds>N</Recharge_Seconds><Effective_Radius>R</...>
+    if (const XmlNode* abilities = unit.firstChild("Unit_Abilities_Data")) {
+        for (const XmlNode& ab : abilities->children) {
+            if (ab.name != "Unit_Ability") continue;
+            ObjectType::Ability a;
+            a.name = childText(ab, "Type");
+            if (a.name.empty()) continue;
+            a.cooldown = toDouble(childText(ab, "Recharge_Seconds"));
+            a.range = toDouble(childText(ab, "Effective_Radius"));
+            // Damage multiplier effects (Mod_Multiplier TAKE_DAMAGE...) are
+            // not modeled; abilities without damage are utility (LURE etc.).
+            t.abilities.push_back(std::move(a));
+        }
+    }
+
     // Replace same-name entries (later defs win).
     for (ObjectType& existing : out) {
         if (existing.name == name) {
