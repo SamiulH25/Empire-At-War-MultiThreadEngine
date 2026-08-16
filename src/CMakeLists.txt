@@ -59,6 +59,11 @@ add_executable(sim_tool
 )
 target_link_libraries(sim_tool PRIVATE eaw_core)
 
+add_executable(mod_tool
+    cli/mod_tool.cpp
+)
+target_link_libraries(mod_tool PRIVATE eaw_core)
+
 # Tests
 enable_testing()
 add_executable(meg_tests
@@ -162,6 +167,12 @@ add_executable(economy_tests
 )
 target_link_libraries(economy_tests PRIVATE eaw_core)
 add_test(NAME economy_tests COMMAND economy_tests)
+
+add_executable(mod_compat_tests
+    tests/test_mod_compat.cpp
+)
+target_link_libraries(mod_compat_tests PRIVATE eaw_core)
+add_test(NAME mod_compat_tests COMMAND mod_compat_tests)
 
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test

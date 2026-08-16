@@ -35,6 +35,11 @@ public:
     size_t archiveCount() const { return archives_.size(); }
     size_t looseCount() const { return loose_.size(); }
 
+    // Loose file names (for tooling/reporting).
+    const std::unordered_map<std::string, std::vector<uint8_t>>& loose() const {
+        return loose_;
+    }
+
 private:
     struct ArchiveRef {
         const std::vector<uint8_t>* bytes = nullptr;
