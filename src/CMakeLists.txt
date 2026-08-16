@@ -49,6 +49,11 @@ add_executable(gameconfig_tool
 )
 target_link_libraries(gameconfig_tool PRIVATE eaw_core)
 
+add_executable(sim_tool
+    cli/sim_tool.cpp
+)
+target_link_libraries(sim_tool PRIVATE eaw_core)
+
 # Tests
 enable_testing()
 add_executable(meg_tests

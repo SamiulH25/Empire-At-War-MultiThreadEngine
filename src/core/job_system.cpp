@@ -8,26 +8,8 @@
 
 namespace eaw {
 
-namespace {
-
-// Contiguous range partition: split [0, count) into ~n ranges of roughly
-// equal size (data-oriented partitioning keeps caches warm).
-void partitionRanges(int64_t count, unsigned parts,
-                     std::vector<std::pair<int64_t, int64_t>>& out) {
-    out.clear();
-    if (count <= 0 || parts == 0) return;
-    unsigned n = static_cast<unsigned>(std::min<int64_t>(parts, count));
-    int64_t chunk = count / n;
-    int64_t rem = count % n;
-    int64_t start = 0;
-    for (unsigned i = 0; i < n; ++i) {
-        int64_t len = chunk + (static_cast<int64_t>(i) < rem ? 1 : 0);
-        out.emplace_back(start, start + len);
-        start += len;
-    }
-}
-
-} // namespace
+// (partitionRanges removed: parallel_for now uses cooperative range stealing
+// via a shared atomic index — no per-range task allocation.)
 
 JobSystem::JobSystem(unsigned threads) {
     unsigned hw = std::thread::hardware_concurrency();
@@ -149,37 +131,104 @@ void JobSystem::workerLoop(Worker& w) {
     while (!w.stop.load(std::memory_order_acquire)) {
         if (tryRunLocal(w)) continue;
         if (trySteal(w)) continue;
+        // Help any in-flight parallel_for (cooperative range stealing).
+        if (pullRange(w)) continue;
         if (shutdown_.load(std::memory_order_acquire)) break;
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
     }
+}
+
+unsigned JobSystem::partsFor(int64_t count) const {
+    unsigned parts = poolSize_ + 1;
+    if (static_cast<int64_t>(parts) > count) parts = static_cast<unsigned>(count);
+    return parts;
 }
 
 void JobSystem::parallel_for(int64_t count,
                              const std::function<void(int64_t, int64_t)>& fn) {
     if (count <= 0) return;
-    unsigned parts = poolSize_ + 1; // workers + this thread
-    std::vector<std::pair<int64_t, int64_t>> ranges;
-    partitionRanges(count, parts, ranges);
-    if (ranges.size() <= 1) {
+    unsigned parts = partsFor(count);
+    if (parts <= 1 || count <= 8) {
+        // Tiny workload: serial is cheaper than coordination.
         fn(0, count);
         return;
     }
-    std::atomic<int> remaining{static_cast<int>(ranges.size())};
-    // Launch all but one range as tasks; run the last on this thread.
-    for (size_t i = 0; i + 1 < ranges.size(); ++i) {
-        auto [a, b] = ranges[i];
-        auto* t = new Task;
-        t->doneCounter = &remaining;
-        t->fn = [fn, a, b] { fn(a, b); };
-        pushTask(t);
-    }
-    // This thread runs the final range (participates in the work).
+    // Ranges of roughly equal size.
+    int64_t chunk = count / parts;
+    int64_t rem = count % parts;
+    auto rangeOf = [&](int64_t r) -> std::pair<int64_t, int64_t> {
+        int64_t start = r * chunk + std::min<int64_t>(r, rem);
+        int64_t len = chunk + (r < rem ? 1 : 0);
+        return {start, start + len};
+    };
+
+    std::unique_ptr<RangeWork> work = std::make_unique<RangeWork>();
+    work->fn = fn;
+    work->count = count;
+    work->parts = parts;
+    work->next.store(0, std::memory_order_relaxed);
+    work->active.store(static_cast<int>(parts), std::memory_order_relaxed);
+
     {
-        auto [a, b] = ranges.back();
-        fn(a, b);
-        remaining.fetch_sub(1, std::memory_order_acq_rel);
+        std::lock_guard<std::mutex> lk(rangeMtx_);
+        rangeWork_ = std::move(work);
     }
-    waitAll(remaining);
+    rangeCv_.notify_all();
+
+    // The caller participates: pull ranges until none remain or the work is
+    // gone (a worker may have finished the last range and reset it).
+    for (;;) {
+        RangeWork* w;
+        int64_t r;
+        {
+            std::lock_guard<std::mutex> lk(rangeMtx_);
+            w = rangeWork_.get();
+            if (!w) break; // workers finished everything
+            r = w->next.fetch_add(1, std::memory_order_relaxed);
+            if (r >= w->parts) break; // all claimed; wait for stragglers
+        }
+        auto [a, b] = rangeOf(r);
+        w->fn(a, b);
+        if (w->active.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            std::lock_guard<std::mutex> lk(rangeMtx_);
+            rangeWork_.reset();
+            rangeCv_.notify_all();
+            break;
+        }
+    }
+
+    // Wait for workers to finish their ranges (if the caller ran out first).
+    {
+        std::unique_lock<std::mutex> lk(rangeMtx_);
+        rangeCv_.wait(lk, [&] { return rangeWork_ == nullptr; });
+    }
+}
+
+bool JobSystem::pullRange(Worker&) {
+    RangeWork* w = nullptr;
+    int64_t r = 0;
+    {
+        std::lock_guard<std::mutex> lk(rangeMtx_);
+        w = rangeWork_.get();
+        if (!w) return false;
+        // Claim the range under the lock: once claimed, this range's
+        // decrement keeps `active` > 0, so `w` cannot be freed until we
+        // run fn and decrement (the reset only happens at active == 0).
+        r = w->next.fetch_add(1, std::memory_order_relaxed);
+        if (r >= w->parts) return false; // no ranges left
+    }
+    // Compute the range (same math as the caller).
+    int64_t chunk = w->count / w->parts;
+    int64_t rem = w->count % w->parts;
+    int64_t start = r * chunk + std::min<int64_t>(r, rem);
+    int64_t len = chunk + (r < rem ? 1 : 0);
+    w->fn(start, start + len);
+    if (w->active.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        std::lock_guard<std::mutex> lk(rangeMtx_);
+        rangeWork_.reset();
+        rangeCv_.notify_all();
+    }
+    return true;
 }
 
 void JobSystem::parallel_invoke(std::vector<std::function<void()>> fns) {

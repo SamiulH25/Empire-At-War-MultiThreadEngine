@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace eaw {
@@ -13,8 +14,23 @@ namespace {
 // object sets (design doc 06: read-shared, write-partitioned). Movement is
 // full 3D: waypoint paths carry altitude, and the direct-move case
 // interpolates all three axes.
-void integrateObject(GameObject& o, double dt) {
+void integrateObject(const std::unordered_map<int, Vec3>& positions,
+                     eaw::SimState& sim, GameObject& o, double dt) {
     if (!o.alive || !o.hasMoveTarget) return;
+    // RTS behavior: if we have a live enemy attack target in weapon range,
+    // hold position and fire instead of moving (kiting is a later upgrade).
+    // Reads the target's position from the tick snapshot (never the live
+    // position another worker may be writing).
+    if (o.attackTargetId != 0) {
+        auto it = positions.find(o.attackTargetId);
+        const GameObject* t = sim.object(o.attackTargetId);
+        const ObjectType* tt = t ? sim.type(t->typeName) : nullptr;
+        if (t && t->alive && !sim.isAlly(o.playerId, t->playerId) &&
+            it != positions.end() &&
+            o.position.distanceTo(it->second) <= (tt ? tt->maxRange : 0.0) + 1e-9) {
+            return; // in range: hold and shoot
+        }
+    }
     // If the unit has a computed path, walk it waypoint by waypoint.
     if (o.pathIndex < o.path.size()) {
         Vec3 target = o.path[o.pathIndex];
@@ -65,9 +81,10 @@ struct ShotDecision {
 };
 
 // Phase 1: decide shots. Reads the shooter's own state + the target's
-// position/player (read-only); writes only decisions[i] (the shooter's own
-// slot) and the shooter's own cooldown.
-void decideShot(const SimState& sim, const std::vector<int>& ids, int64_t i,
+// position (from the tick snapshot — read-only) and player; writes only
+// decisions[i] (the shooter's own slot) and the shooter's own cooldown.
+void decideShot(const SimState& sim, const std::unordered_map<int, Vec3>& positions,
+                const std::vector<int>& ids, int64_t i,
                 const std::vector<GameObject*>& objs, double dt,
                 ShotDecision& out) {
     GameObject* o = objs[i];
@@ -77,10 +94,24 @@ void decideShot(const SimState& sim, const std::vector<int>& ids, int64_t i,
     if (!t || t->damage <= 0 || o->attackCooldown > 0.0) return;
     // Find the attack target (may be set by script or auto-acquired).
     const GameObject* target = o->attackTargetId ? sim.object(o->attackTargetId) : nullptr;
+    if (!target || !target->alive || sim.isAlly(o->playerId, target->playerId)) {
+        // Auto-acquire: nearest living enemy by snapshot position.
+        target = nullptr;
+        double best = std::numeric_limits<double>::max();
+        for (const auto& [eid, epos] : positions) {
+            if (eid == o->id) continue;
+            const GameObject* e = sim.object(eid);
+            if (!e || !e->alive) continue;
+            if (sim.isAlly(o->playerId, e->playerId)) continue;
+            double d = o->position.distanceTo(epos);
+            if (d < best) { best = d; target = e; }
+        }
+        if (target) o->attackTargetId = target->id;
+    }
     if (!target || !target->alive) return;
-    // No friendly fire: allies (and self) are not valid targets.
-    if (sim.isAlly(o->playerId, target->playerId)) return;
-    double dist = o->position.distanceTo(target->position);
+    auto it = positions.find(target->id);
+    if (it == positions.end()) return;
+    double dist = o->position.distanceTo(it->second);
     if (dist > t->maxRange) return;
     // Fire.
     out.targetId = target->id;
@@ -119,9 +150,17 @@ Simulation::Simulation(unsigned workerThreads)
 void Simulation::tick(double dt) {
     time_ += dt;
     scripts_.pump(dt);
+    snapshotPositions();
     stepPathfinding();
     updateObjects(dt);
     runCombat(dt);
+}
+
+void Simulation::snapshotPositions() {
+    positions_.clear();
+    for (const GameObject* o : sim().allObjects()) {
+        positions_[o->id] = o->position;
+    }
 }
 
 void Simulation::updateObjects(double dt) {
@@ -135,7 +174,7 @@ void Simulation::updateObjects(double dt) {
     jobs_.parallel_for(n, [&](int64_t start, int64_t end) {
         for (int64_t i = start; i < end; ++i) {
             GameObject* o = sim().object(ids[i]);
-            if (o) integrateObject(*o, dt);
+            if (o) integrateObject(positions_, sim(), *o, dt);
         }
     });
     ++updateTicks_;
@@ -149,7 +188,13 @@ void Simulation::stepPathfinding() {
         if (!o->alive || !o->hasMoveTarget) continue;
         if (!o->path.empty()) continue;        // already following a path
         if (o->pathSearchId != 0) continue;    // search already in flight
-        if (grid_.lineBlocked(o->position.x, o->position.y, o->position.z,
+        // Only route inside the grid; moves that leave it beeline (the grid
+        // is bounded but the world is not).
+        if (grid_.inBounds(grid_.cellOf(o->position.x), grid_.cellOf(o->position.y),
+                           grid_.cellOf(o->position.z)) &&
+            grid_.inBounds(grid_.cellOf(o->moveTarget.x), grid_.cellOf(o->moveTarget.y),
+                           grid_.cellOf(o->moveTarget.z)) &&
+            grid_.lineBlocked(o->position.x, o->position.y, o->position.z,
                               o->moveTarget.x, o->moveTarget.y, o->moveTarget.z)) {
             toRequest.push_back(o->id);
         }
@@ -201,7 +246,7 @@ void Simulation::runCombat(double dt) {
     for (int64_t i = 0; i < n; ++i) objs[i] = sim().object(ids[i]);
     jobs_.parallel_for(n, [&](int64_t start, int64_t end) {
         for (int64_t i = start; i < end; ++i) {
-            decideShot(sim(), ids, i, objs, dt, decisions[i]);
+            decideShot(sim(), positions_, ids, i, objs, dt, decisions[i]);
         }
     });
     for (const ShotDecision& d : decisions) {

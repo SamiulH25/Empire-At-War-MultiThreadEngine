@@ -39,7 +39,7 @@ struct CombatFixture {
         eaw::ObjectType isd;
         isd.name = "ISD";
         isd.properties = {"Unit"};
-        isd.damage = 0.05;
+        isd.damage = 0.0; // non-combatant by default: only the X_WING shoots
         isd.attackRate = 1.0;
         isd.maxRange = 500;
         sim->sim().addType(std::move(isd));

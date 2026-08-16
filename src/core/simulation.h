@@ -18,6 +18,8 @@
 #include "core/pathfinding.h"
 #include "core/script_manager.h"
 
+#include <unordered_map>
+
 namespace eaw {
 
 class Simulation {
@@ -49,7 +51,13 @@ public:
     // Total shots fired by the combat pass (for tests/telemetry).
     unsigned long long totalShots() const { return totalShots_; }
 
+    // Position snapshot for the current tick: object id -> position, taken
+    // before the parallel update so cross-object reads (hold-position,
+    // targeting) are race-free and deterministic.
+    const std::unordered_map<int, Vec3>& positionSnapshot() const { return positions_; }
+
 private:
+    void snapshotPositions();
     void updateObjects(double dt);
     void runCombat(double dt);
     void stepPathfinding();
@@ -63,6 +71,7 @@ private:
     double time_ = 0.0;
     unsigned long long updateTicks_ = 0;
     unsigned long long totalShots_ = 0;
+    std::unordered_map<int, Vec3> positions_;
 };
 
 } // namespace eaw

@@ -14,6 +14,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -39,7 +40,9 @@ public:
     unsigned workerCount() const { return workers_.size(); }
 
     // Invokes fn(start, end) for contiguous ranges partitioning [0, count).
-    // Returns when all ranges complete on this thread's call.
+    // Returns when all ranges complete on this thread's call. Zero task
+    // allocation on the hot path: workers pull ranges from a shared atomic
+    // index.
     void parallel_for(int64_t count, const std::function<void(int64_t, int64_t)>& fn);
 
     // Runs each fn[i] (on worker threads, this thread runs one too).
@@ -48,6 +51,9 @@ public:
     // Runs fn on the calling thread (helper for serial fallback).
     static void run_serial(int64_t count,
                            const std::function<void(int64_t, int64_t)>& fn);
+
+    // Number of range partitions used by parallel_for (workers + caller).
+    unsigned partsFor(int64_t count) const;
 
 private:
     struct Task {
@@ -69,9 +75,24 @@ private:
     void workerLoop(Worker& w);
     bool tryRunLocal(Worker& w);
     bool trySteal(Worker& w);
+    // Pulls one range from the in-flight parallel_for (cooperative stealing).
+    // Returns true if a range was run.
+    bool pullRange(Worker& w);
     void pushTask(Task* t);
     bool runOne(Worker* self); // runs one task (from this worker or a steal)
     void waitAll(std::atomic<int>& counter);
+
+    // Cooperative range-stealing state for a parallel_for in flight.
+    struct RangeWork {
+        std::function<void(int64_t, int64_t)> fn;
+        std::atomic<int64_t> next{0};
+        int64_t count = 0;
+        unsigned parts = 1;
+        std::atomic<int> active{0};
+    };
+    std::unique_ptr<RangeWork> rangeWork_; // one in flight (caller-serialized)
+    std::mutex rangeMtx_;
+    std::condition_variable rangeCv_;
 
     std::vector<std::unique_ptr<Worker>> workers_;
     std::atomic<bool> shutdown_{false};
