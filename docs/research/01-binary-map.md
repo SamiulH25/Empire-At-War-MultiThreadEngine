@@ -85,6 +85,40 @@ This is a **callback injection surface**: the engine passes 11 function pointers
 perception DLL so it can evaluate perception queries (token matching, math, memory alloc,
 string lookup, megafile access) without direct engine linkage.
 
+## String Census
+
+Full auto-generated output: [01-string-census.md](01-string-census.md) (via `scripts/string_census.py`).
+
+Most relevant threading/sync strings found across all binaries (file offsets):
+
+| Binary | Offset | String | Why it matters |
+|---|---|---|---|
+| corruption/StarWarsG.exe | `0x00803B50` | `LoadThread` | Threaded loading path |
+| corruption/StarWarsG.exe | `0x008505F0` | `ThreadLockMutexClass -- %s failed to obtain mutex within 10 seconds (current owner is %s)` | Engine mutex w/ timeout + owner diagnostics |
+| corruption/StarWarsG.exe | `0x008509E8` | `PacketHandler Thread` | Network packet thread |
+| corruption/StarWarsG.exe | `0x00851F30` | `NATUtilsThread` | NAT traversal thread |
+| corruption/StarWarsG.exe | `0x008537A8` | `Main Thread` | Named main thread |
+| corruption/StarWarsG.exe | `0x008537E8` | `Thread %d (%s) failed to exit - forcing exit` | Thread manager shutdown |
+| corruption/StarWarsG.exe | `0x008546D0` | `LuaScriptThread: Main State` | Lua script threads; "Main State" implies coroutine model |
+| corruption/StarWarsG.exe | `0x00854860` | `LuaThreadTable` | Table of live Lua threads |
+| corruption/StarWarsG.exe | `0x00855948` | `LuaCreateThread -- Expected a LuaFunction parameter.` | `LuaCreateThread` takes a Lua function → coroutine creation |
+| corruption/StarWarsG.exe | `0x008563D8` | `GetThreadID` | Lua binding: get thread id |
+| corruption/StarWarsG.exe | `0x008563F8` | `Create_Thread` | Lua binding: create thread |
+| corruption/StarWarsG.exe | `0x00872D80` | `%s -- Pump_Threads` | Per-frame thread pumping in the game loop |
+| corruption/StarWarsG.exe | `0x00883790` | `SpacePathfindMaxExpansions` | Pathfinding budget setting |
+| corruption/StarWarsG.exe | `0x008837D0` | `SpacePathfindFrameDelayDelta` | Pathfinding is frame-sliced (work spread across frames) |
+| corruption/StarWarsG.exe | `0x00851398` | `Data\MegaFiles.xml` | Megafile load-order file (capital M/F — not `megafiles.xml`) |
+| GameData/StarWarsG.exe | `0x009704F8` | `.?AVThreadClass@@` | RTTI: engine ThreadClass exists |
+| GameData/StarWarsG.exe | `0x00970520` | `.?AVLoadingThreadClass@@` | RTTI: loading thread is a ThreadClass subclass |
+| GameData/StarWarsG.exe | `0x009732F8` | `.?AVMainThreadClass@@` | RTTI: main thread is a ThreadClass subclass |
+| corruption/PerceptionFunctionG.dll | `0x000C77B0` | `ThreadLockMutexClass -- ...` | Perception DLL has its own mutex class (corruption build) |
+| corruption/PerceptionFunctionG.dll | `0x000F0292` | `InitializeCriticalSectionAndSpinCount` | Import: CS with spin count |
+| corruption/PerceptionFunctionG.dll | `0x000F018C` | `CreateMutexA` | Import: named mutexes in perception DLL |
+| corruption/swfoc.exe | `0x001036C0` | `C:\Projects\TGW\Eng\Libs\PGLib\Thread.cpp` | **Engine codename leak: "TGW"; PGLib = Petroglyph library** |
+| corruption/swfoc.exe | `0x00101FB0` | `C:\Projects\TGW\Eng\Libs\PGLib\FastThreadLock.h` | Fast thread lock (spinlock?) used by launcher |
+| corruption/swfoc.exe | `0x00103798` | `Creating heap %p, for thread %d` | ThreadClass gives each thread its own heap |
+| corruption/swfoc.exe | `0x0014B380` | `?initialize@task_scheduler_init@tbb@@...` | Confirms TBB linkage in swfoc.exe |
+
 ## Next Steps
 
 1. Install Ghidra + radare2
