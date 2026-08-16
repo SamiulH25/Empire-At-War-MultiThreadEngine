@@ -1,7 +1,54 @@
 # 04 — Simulation Architecture
 
-**Status:** Main loop located (2026-08-16) — static analysis of corruption/StarWarsG.exe
+**Status:** Main loop located + runtime baseline captured (2026-08-16)
 **Last updated:** 2026-08-16
+
+## Runtime Baseline (2026-08-16)
+
+Captured via `scripts/thread_snapshot.py` (PID 14780, FoCs `corruption/StarWarsG.exe`).
+
+### Menu (main menu, idle)
+
+| TID | CPU time | Notes |
+|---|---|---|
+| 10996 | 36.4s | **Main thread** (dominant consumer) |
+| 15312 | 14.3s | **Second CPU-active worker** (~40% of main) |
+| 5024 | 1.3s | Light worker |
+| 7464 | 0.8s | Light worker |
+| rest (19) | ~0 | Waiting (threadpool/IO) |
+
+Total: **23 threads**.
+
+### Battle (skirmish, medium AI, ~60s in)
+
+| TID | CPU time | Notes |
+|---|---|---|
+| 10996 | 56.8s | **Main thread** (+20.4s during battle) |
+| 15312 | 25.4s | **Worker** (+11.1s — active in battle, ~35% of main's load) |
+| 5024 | 2.3s | (+1.0s) |
+| 7464 | 1.1s | (+0.3s) |
+| rest (16) | ~0 | Waiting |
+
+Total: **20 threads** (3 exited after battle load — the loading thread + menu workers).
+
+Working set: 485 MB (menu) → 562 MB (battle).
+
+### Key observations
+
+- **Main thread (TID 10996) dominates** — consistent with the single-threaded sim loop
+  found in static analysis (Task 1.4).
+- **A second CPU-active thread (TID 15312) exists and runs during battle** at ~35% of
+  main-thread load. Static analysis predicted only a loading thread; this worker is
+  persistent (present in menu + battle). Candidates: Miles audio mixer, Steam API,
+  or a background packet/NAT thread. **Needs identification** — see open question below.
+- Thread count **drops** from menu to battle (23→20): loading thread exits after load;
+  the game does not spawn per-battle workers (no thread growth with battle load).
+- No thread scaling with battle size observed (2 CPU-active threads regardless).
+
+### Open question (from Task 2.1)
+
+- What is TID 15312? Needs a start-address resolution (requires admin for
+  `ProcessThread.StartAddress`) or x64dbg attach (Task 2.2) to identify.
 
 ## Main Loop (confirmed, corruption/StarWarsG.exe)
 
