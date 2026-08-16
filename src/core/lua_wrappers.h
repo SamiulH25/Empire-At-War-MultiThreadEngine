@@ -21,6 +21,7 @@ enum class WrapperKind : int {
     Type = 3,
     Position = 4,
     Command = 5,
+    TaskForce = 6,
 };
 
 struct Wrapper {
@@ -80,6 +81,30 @@ inline const GameObject* wrapperObject(lua_State* s, Wrapper* w) {
 inline bool wrapperObjectValid(lua_State* s, Wrapper* w) {
     const GameObject* o = wrapperObject(s, w);
     return o && o->alive;
+}
+
+// Resolves a target arg (Object or Position wrapper) to a position; returns
+// false if the arg is neither.
+inline bool targetPosition(lua_State* s, int idx, Vec3& out) {
+    if (!lua_isuserdata(s, idx)) return false;
+    Wrapper* w = checkWrapper(s, idx);
+    if (w->kind == WrapperKind::Position) { out = w->pos; return true; }
+    if (w->kind == WrapperKind::Object) {
+        const GameObject* o = wrapperObject(s, w);
+        if (!o) return false;
+        out = o->position;
+        return true;
+    }
+    return false;
+}
+
+// Pushes a command block wrapper (finished immediately; sim has no async
+// movement for blocks yet, but scripts can poll IsFinished/Result).
+inline void pushCommandBlock(lua_State* s, SimState* sim, double result) {
+    pushWrapper(s, sim, WrapperKind::Command, 0);
+    Wrapper* cw = static_cast<Wrapper*>(lua_touserdata(s, -1));
+    cw->result = result;
+    cw->finished = true;
 }
 
 } // namespace eaw

@@ -11,6 +11,7 @@ ScriptManager::ScriptManager(MegaFileManager& files)
     registerPgBindings(host_);
     registerObjectBindings(host_, sim_);
     registerEventBindings(host_, events_, sim_);
+    registerTaskForceBindings(host_, sim_);
     events_.attach(host_.state());
     setEngineTime(host_.state(), time_);
 }

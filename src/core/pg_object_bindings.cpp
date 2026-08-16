@@ -515,15 +515,8 @@ int posGetXYZ(lua_State* s) {
 // ---- wrapper methods (object actions) ------------------------------------
 // These mutate the sim and return CommandBlock wrappers (or nothing), per the
 // documented API. Positions are the target's position for object targets.
-
-// Pushes a command block wrapper (finished immediately; sim has no async
-// movement yet, but scripts can poll IsFinished/Result).
-void pushCommandBlock(lua_State* s, SimState* sim, double result) {
-    pushWrapper(s, sim, WrapperKind::Command, 0);
-    Wrapper* cw = static_cast<Wrapper*>(lua_touserdata(s, -1));
-    cw->result = result;
-    cw->finished = true;
-}
+// (pushCommandBlock / targetPosition live in lua_wrappers.h — shared with
+// the taskforce bindings.)
 
 int cmdIsFinished(lua_State* s) {
     Wrapper* w = checkWrapper(s, 1);
@@ -536,21 +529,6 @@ int cmdResult(lua_State* s) {
     if (w->result == 0) { lua_pushnil(s); return 1; }
     lua_pushnumber(s, w->result);
     return 1;
-}
-
-// Resolves a target arg (Object or Position wrapper) to a position; returns
-// false if the arg is neither.
-bool targetPosition(lua_State* s, int idx, Vec3& out) {
-    if (!lua_isuserdata(s, idx)) return false;
-    Wrapper* w = checkWrapper(s, idx);
-    if (w->kind == WrapperKind::Position) { out = w->pos; return true; }
-    if (w->kind == WrapperKind::Object) {
-        const GameObject* o = wrapperObject(s, w);
-        if (!o) return false;
-        out = o->position;
-        return true;
-    }
-    return false;
 }
 
 int objMoveTo(lua_State* s) {
@@ -894,6 +872,25 @@ int wrapperIndex(lua_State* s) {
             return 1;
         }
     }
+    // Extended method tables (taskforce bindings register into
+    // __PgWrapperMethods[kind][name]).
+    lua_getfield(s, LUA_REGISTRYINDEX, "__PgWrapperMethods");
+    if (lua_istable(s, -1)) {
+        lua_pushinteger(s, static_cast<int>(w->kind));
+        lua_gettable(s, -2);               // [methods, kindTable]
+        if (lua_istable(s, -1)) {
+            lua_pushstring(s, key);
+            lua_gettable(s, -2);           // [methods, kindTable, fn]
+            if (lua_isfunction(s, -1)) {
+                lua_remove(s, -2);
+                lua_remove(s, -2);
+                return 1;
+            }
+            lua_pop(s, 1);                 // drop nil fn
+        }
+        lua_pop(s, 1);                     // drop kindTable
+    }
+    lua_pop(s, 1);                         // drop methods
     lua_pushnil(s);
     return 1;
 }
@@ -915,6 +912,9 @@ int wrapperToString(lua_State* s) {
             break;
         case WrapperKind::Command:
             lua_pushfstring(s, "CommandBlock");
+            break;
+        case WrapperKind::TaskForce:
+            lua_pushfstring(s, "TaskForce(%d)", w->id);
             break;
     }
     return 1;

@@ -98,6 +98,21 @@ struct GameObject {
     std::vector<int> garrisonedUnits; // ids of units inside
 };
 
+// A taskforce — the AI's unit group (PGTASKFORCE model).
+//
+// A named group of units owned by one player, with a current stage, goal
+// type, and plan result. Units can be added/removed; the force follows
+// collective orders (attack/move/garrison) that fan out to the units.
+struct TaskForce {
+    int id = 0;
+    int playerId = 0;
+    std::string name;          // goal-type name (e.g. "AttackPlan")
+    int stage = 0;
+    bool planResult = false;   // Set_Plan_Result
+    bool goalSystemRemovable = true;
+    std::vector<int> units;    // object ids in the force
+};
+
 class SimState {
 public:
     // --- players ---
@@ -152,16 +167,34 @@ public:
     // Registered type names (for seeding the Lua type-wrapper tables).
     std::vector<std::string> typeNames() const;
 
+    // --- taskforces ---
+    // Creates a taskforce for `playerId` with the given goal-type name.
+    int addTaskForce(int playerId, const std::string& name);
+    const TaskForce* taskForce(int id) const;
+    TaskForce* taskForce(int id);
+    // Adds a unit to the force (idempotent). Returns false if either is
+    // invalid.
+    bool addUnitToForce(int forceId, int unitId);
+    void removeUnitFromForce(int forceId, int unitId);
+    // Removes dead units from all forces (called by the sim each tick).
+    void pruneDeadUnits();
+    // Sum of the force's units' hulls (a simple threat measure).
+    double forceThreat(int forceId) const;
+    // All taskforces owned by a player.
+    std::vector<const TaskForce*> forcesOfPlayer(int playerId) const;
+
     int nextObjectId() const { return nextObjectId_; }
 
 private:
     // deque: element references stay valid across additions (the Lua bindings
     // hold Player* via id lookups; the fixture mutates via the returned ref).
     std::deque<Player> players_;
+    std::deque<TaskForce> forces_;
     std::unordered_map<std::string, ObjectType> types_;
     std::unordered_map<int, GameObject> objects_;
     int nextObjectId_ = 1;
     int nextPlayerId_ = 1;
+    int nextForceId_ = 1;
 };
 
 } // namespace eaw

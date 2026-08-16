@@ -150,6 +150,7 @@ Simulation::Simulation(unsigned workerThreads)
 void Simulation::tick(double dt) {
     time_ += dt;
     scripts_.pump(dt);
+    sim().pruneDeadUnits();
     snapshotPositions();
     stepPathfinding();
     updateObjects(dt);

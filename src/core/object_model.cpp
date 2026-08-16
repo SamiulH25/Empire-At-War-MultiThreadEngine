@@ -195,4 +195,77 @@ std::vector<std::string> SimState::typeNames() const {
     return out;
 }
 
+// --- taskforces -----------------------------------------------------------
+
+int SimState::addTaskForce(int playerId, const std::string& name) {
+    TaskForce f;
+    f.id = nextForceId_++;
+    f.playerId = playerId;
+    f.name = name;
+    forces_.push_back(std::move(f));
+    return forces_.back().id;
+}
+
+const TaskForce* SimState::taskForce(int id) const {
+    for (const auto& f : forces_) {
+        if (f.id == id) return &f;
+    }
+    return nullptr;
+}
+
+TaskForce* SimState::taskForce(int id) {
+    for (auto& f : forces_) {
+        if (f.id == id) return &f;
+    }
+    return nullptr;
+}
+
+bool SimState::addUnitToForce(int forceId, int unitId) {
+    TaskForce* f = taskForce(forceId);
+    if (!f || !object(unitId)) return false;
+    if (std::find(f->units.begin(), f->units.end(), unitId) == f->units.end()) {
+        f->units.push_back(unitId);
+    }
+    return true;
+}
+
+void SimState::removeUnitFromForce(int forceId, int unitId) {
+    TaskForce* f = taskForce(forceId);
+    if (!f) return;
+    f->units.erase(std::remove(f->units.begin(), f->units.end(), unitId),
+                   f->units.end());
+}
+
+void SimState::pruneDeadUnits() {
+    for (auto& f : forces_) {
+        for (size_t i = 0; i < f.units.size();) {
+            const GameObject* o = object(f.units[i]);
+            if (!o || !o->alive) {
+                f.units.erase(f.units.begin() + i);
+            } else {
+                ++i;
+            }
+        }
+    }
+}
+
+double SimState::forceThreat(int forceId) const {
+    const TaskForce* f = taskForce(forceId);
+    if (!f) return 0.0;
+    double sum = 0.0;
+    for (int id : f->units) {
+        const GameObject* o = object(id);
+        if (o && o->alive) sum += o->hull;
+    }
+    return sum;
+}
+
+std::vector<const TaskForce*> SimState::forcesOfPlayer(int playerId) const {
+    std::vector<const TaskForce*> out;
+    for (const auto& f : forces_) {
+        if (f.playerId == playerId) out.push_back(&f);
+    }
+    return out;
+}
+
 } // namespace eaw
