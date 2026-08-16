@@ -85,6 +85,12 @@ GameObject& SimState::addObject(const std::string& typeName, int playerId, const
     o.typeName = typeName;
     o.playerId = playerId;
     o.position = pos;
+    // Apply type-derived stats (shield fraction, move speed).
+    const ObjectType* t = type(typeName);
+    if (t) {
+        o.shield = t->shieldFraction;
+        o.moveSpeed = t->moveSpeed;
+    }
     return objects_[o.id] = std::move(o);
 }
 

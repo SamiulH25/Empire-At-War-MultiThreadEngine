@@ -37,6 +37,13 @@ struct ObjectType {
     double buildCost = 0;
     int techLevel = 0;
     double maxRange = 0, minRange = 0;
+    // Raw game stats (from the unit XML): hull/shield in game points, damage
+    // per shot in the same scale, attack rate in shots/sec, move speed.
+    double hullPoints = 1.0;
+    double shieldPoints = 0.0;
+    double moveSpeed = 50.0;
+    // Normalized shield fraction (0..1) of a full hull bar at spawn.
+    double shieldFraction = 0.0;
     // Combat stats (modeled from the XML combat surface: weapon damage is
     // per-shot, attack rate is shots per second).
     double damage = 0.0;         // per-shot damage (fraction of target hull)

@@ -28,6 +28,7 @@ add_library(eaw_core STATIC
     core/event_system.cpp
     core/path_grid.cpp
     core/pathfinding.cpp
+    core/unit_data_loader.cpp
     core/pg_bindings.cpp
     core/pg_object_bindings.cpp
     core/pg_event_bindings.cpp
@@ -134,6 +135,12 @@ add_executable(taskforce_tests
 )
 target_link_libraries(taskforce_tests PRIVATE eaw_core)
 add_test(NAME taskforce_tests COMMAND taskforce_tests)
+
+add_executable(unit_data_tests
+    tests/test_unit_data_loader.cpp
+)
+target_link_libraries(unit_data_tests PRIVATE eaw_core)
+add_test(NAME unit_data_tests COMMAND unit_data_tests)
 
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test
