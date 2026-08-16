@@ -559,8 +559,11 @@ int objMoveTo(lua_State* s) {
     if (!o) { lua_pushnil(s); return 1; }
     Vec3 target;
     if (!targetPosition(s, 2, target)) { lua_pushnil(s); return 1; }
+    // Set the move target; the sim's parallel update integrates toward it
+    // over subsequent ticks (async, like the game's movement).
     GameObject* g = w->sim->object(o->id);
-    g->position = target;
+    g->hasMoveTarget = true;
+    g->moveTarget = target;
     pushCommandBlock(s, w->sim, 0);
     return 1;
 }

@@ -11,6 +11,7 @@
 // per-object subsystems parallelize inside it later.
 #pragma once
 
+#include "core/job_system.h"
 #include "core/meg_manager.h"
 #include "core/object_model.h"
 #include "core/script_manager.h"
@@ -19,7 +20,7 @@ namespace eaw {
 
 class Simulation {
 public:
-    Simulation();
+    explicit Simulation(unsigned workerThreads = 0);
 
     Simulation(const Simulation&) = delete;
     Simulation& operator=(const Simulation&) = delete;
@@ -27,18 +28,27 @@ public:
     MegaFileManager& files() { return files_; }
     ScriptManager& scripts() { return scripts_; }
     SimState& sim() { return scripts_.sim(); }
+    JobSystem& jobs() { return jobs_; }
 
-    // Advances the sim by dt seconds: time += dt, pump scripts, update sim.
+    // Advances the sim by dt seconds: time += dt, pump scripts, then run the
+    // parallel object update (per-object slices on the worker pool).
     // Throws LuaError if a script thread errors.
     void tick(double dt);
 
     // Current game time in seconds.
     double time() const { return time_; }
 
+    // How many ticks ran the parallel object update.
+    unsigned long long updateTicks() const { return updateTicks_; }
+
 private:
+    void updateObjects(double dt);
+
     MegaFileManager files_;
     ScriptManager scripts_;
+    JobSystem jobs_;
     double time_ = 0.0;
+    unsigned long long updateTicks_ = 0;
 };
 
 } // namespace eaw

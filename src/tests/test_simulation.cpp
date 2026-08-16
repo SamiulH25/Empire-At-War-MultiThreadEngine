@@ -124,13 +124,84 @@ void testEndToEndPump() {
     check(sim.time() > 0.166 && sim.time() < 0.167, "sim time advanced 5 ticks");
 }
 
+void testParallelMoveToIntegration() {
+    // Script orders a unit to move; the sim's parallel update integrates it
+    // over ticks until it arrives.
+    eaw::Simulation sim(4); // 4 workers
+    eaw::Player& rebel = sim.sim().addPlayer("Rebel Alliance", "REBEL");
+    eaw::ObjectType xwing;
+    xwing.name = "X_WING";
+    xwing.properties = {"Unit"};
+    sim.sim().addType(std::move(xwing));
+    eaw::ObjectType isd;
+    isd.name = "ISD";
+    isd.properties = {"Unit"};
+    sim.sim().addType(std::move(isd));
+    int xwingId = sim.sim().spawnUnit("X_WING", rebel.id, {0, 0, 0});
+    int isdId = sim.sim().spawnUnit("ISD", rebel.id, {100, 0, 0});
+    (void)isdId;
+
+    sim.scripts().runScript(
+        "o = Find_First_Object('X_WING')\n"
+        "target = Find_First_Object('ISD')\n"
+        "o:Move_To(target)\n");
+    // Move speed 50 u/s, 100 units away -> ~2s at 30Hz = 60 ticks.
+    for (int i = 0; i < 120; ++i) sim.tick(1.0 / 30.0);
+    const eaw::GameObject* moved = sim.sim().object(xwingId);
+    check(!moved->hasMoveTarget, "unit arrived and cleared move target");
+    double d = moved->position.distanceTo({100, 0, 0});
+    check(d < 0.001, "unit reached the target position");
+    check(sim.updateTicks() == 120, "parallel update ran every tick");
+}
+
+void testParallelDeterminism() {
+    // Two sims with identical setup and worker counts must produce identical
+    // positions after the same tick sequence (determinism by construction).
+    auto setup = [](eaw::Simulation& sim) {
+        eaw::Player& p = sim.sim().addPlayer("Rebel Alliance", "REBEL");
+        eaw::ObjectType xwing;
+        xwing.name = "X_WING";
+        xwing.properties = {"Unit"};
+        sim.sim().addType(std::move(xwing));
+        sim.sim().spawnUnit("X_WING", p.id, {0, 0, 0});
+        sim.sim().spawnUnit("X_WING", p.id, {5, 0, 0});
+        sim.scripts().runScript(
+            "function w1() coroutine.yield() end\n"
+            "Create_Thread('w1')\n");
+    };
+    eaw::Simulation a(4), b(4);
+    setup(a); setup(b);
+    // Order both sims' objects to move to the same targets via script.
+    for (auto* s : {&a, &b}) {
+        s->scripts().runScript(
+            "o = Find_First_Object('X_WING')\n"
+            "o:Move_To(Find_First_Object('ISD') or o)\n"
+            "t = Find_All_Objects_Of_Type('X_WING')\n"
+            "if #t > 1 then t[2]:Move_To(t[1]) end\n");
+    }
+    for (int i = 0; i < 30; ++i) { a.tick(1.0 / 30.0); b.tick(1.0 / 30.0); }
+    auto objsA = a.sim().objectsOfType("X_WING");
+    auto objsB = b.sim().objectsOfType("X_WING");
+    bool same = objsA.size() == objsB.size();
+    if (same) {
+        for (size_t i = 0; i < objsA.size() && same; ++i) {
+            same = objsA[i]->position.distanceTo(objsB[i]->position) < 1e-9 &&
+                   objsA[i]->hasMoveTarget == objsB[i]->hasMoveTarget;
+        }
+    }
+    check(same, "parallel update is deterministic across runs");
+}
+
 } // namespace
 
 int main() {
+    setvbuf(stdout, nullptr, _IONBF, 0);
     testTicksAdvanceTime();
     testScriptDefinesAndSpawns();
     testScriptThreadRunsAcrossTicks();
     testEndToEndPump();
+    testParallelMoveToIntegration();
+    testParallelDeterminism();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;

@@ -74,6 +74,9 @@ struct GameObject {
     bool inGarrison = false;
     bool ordersLocked = false;
     int attackTargetId = 0;
+    bool hasMoveTarget = false;
+    Vec3 moveTarget;               // set by Move_To; sim integrates toward it
+    double moveSpeed = 50.0;       // units per second
     std::vector<int> garrisonedUnits; // ids of units inside
 };
 
