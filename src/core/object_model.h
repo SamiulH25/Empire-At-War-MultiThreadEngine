@@ -105,10 +105,16 @@ struct GameObject {
     std::vector<int> garrisonedUnits; // ids of units inside
 };
 
+// A planet in galactic mode.
+struct Planet {
+    int id = 0;
+    std::string name;          // e.g. "Tatooine"
+    std::string factionName;   // owner faction ("" = neutral)
+    Vec3 position;
+    double garrisonHull = 0;   // total hull of orbiting forces (simple model)
+};
+
 // A taskforce — the AI's unit group (PGTASKFORCE model).
-//
-// A named group of units owned by one player, with a current stage, goal
-// type, and plan result. Units can be added/removed; the force follows
 // collective orders (attack/move/garrison) that fan out to the units.
 struct TaskForce {
     int id = 0;
@@ -117,6 +123,7 @@ struct TaskForce {
     int stage = 0;
     bool planResult = false;   // Set_Plan_Result
     bool goalSystemRemovable = true;
+    int planetId = -1;         // galactic mode: planet the force is at (-1 none)
     std::vector<int> units;    // object ids in the force
 };
 
@@ -190,6 +197,16 @@ public:
     // All taskforces owned by a player.
     std::vector<const TaskForce*> forcesOfPlayer(int playerId) const;
 
+    // --- planets (galactic mode) ---
+    int addPlanet(const std::string& name, const std::string& factionName,
+                  const Vec3& pos);
+    const Planet* planet(int id) const;
+    const Planet* findPlanet(const std::string& name) const;
+    std::vector<const Planet*> allPlanets() const;
+    // The planet a taskforce is currently assigned to (by name lookup of the
+    // force's planetId; -1 if none).
+    int forcePlanet(int forceId) const;
+
     int nextObjectId() const { return nextObjectId_; }
 
 private:
@@ -197,11 +214,13 @@ private:
     // hold Player* via id lookups; the fixture mutates via the returned ref).
     std::deque<Player> players_;
     std::deque<TaskForce> forces_;
+    std::deque<Planet> planets_;
     std::unordered_map<std::string, ObjectType> types_;
     std::unordered_map<int, GameObject> objects_;
     int nextObjectId_ = 1;
     int nextPlayerId_ = 1;
     int nextForceId_ = 1;
+    int nextPlanetId_ = 1;
 };
 
 } // namespace eaw

@@ -916,6 +916,9 @@ int wrapperToString(lua_State* s) {
         case WrapperKind::TaskForce:
             lua_pushfstring(s, "TaskForce(%d)", w->id);
             break;
+        case WrapperKind::Planet:
+            lua_pushfstring(s, "Planet(%d)", w->id);
+            break;
     }
     return 1;
 }

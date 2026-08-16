@@ -274,4 +274,43 @@ std::vector<const TaskForce*> SimState::forcesOfPlayer(int playerId) const {
     return out;
 }
 
+// --- planets (galactic mode) ----------------------------------------------
+
+int SimState::addPlanet(const std::string& name, const std::string& factionName,
+                        const Vec3& pos) {
+    Planet p;
+    p.id = nextPlanetId_++;
+    p.name = name;
+    p.factionName = factionName;
+    p.position = pos;
+    planets_.push_back(std::move(p));
+    return planets_.back().id;
+}
+
+const Planet* SimState::planet(int id) const {
+    for (const auto& p : planets_) {
+        if (p.id == id) return &p;
+    }
+    return nullptr;
+}
+
+const Planet* SimState::findPlanet(const std::string& name) const {
+    for (const auto& p : planets_) {
+        if (p.name == name) return &p;
+    }
+    return nullptr;
+}
+
+std::vector<const Planet*> SimState::allPlanets() const {
+    std::vector<const Planet*> out;
+    out.reserve(planets_.size());
+    for (const auto& p : planets_) out.push_back(&p);
+    return out;
+}
+
+int SimState::forcePlanet(int forceId) const {
+    const TaskForce* f = taskForce(forceId);
+    return f ? f->planetId : -1;
+}
+
 } // namespace eaw

@@ -144,7 +144,22 @@ void applyDamage(const SimState& sim, GameObject* target,
 } // namespace
 
 Simulation::Simulation(unsigned workerThreads)
-    : scripts_(files_), jobs_(workerThreads), pathfinding_(grid_, jobs_) {
+    : scripts_(files_), jobs_(workerThreads),
+      pathfinding_(grid_, jobs_, pathOptions_) {
+}
+
+void Simulation::configure(const GameConstants& gc) {
+    if (gc.spacePathfindMaxExpansions > 0) {
+        pathOptions_.expansionsPerTick = gc.spacePathfindMaxExpansions;
+    }
+    if (gc.spacePathFailureMaxExpansionsCoefficient > 0) {
+        // The game scales the failure cap by a coefficient; we use it as a
+        // multiple of the per-tick budget for the total cap.
+        pathOptions_.maxTotalExpansions = static_cast<int>(
+            gc.spacePathFailureMaxExpansionsCoefficient *
+            pathOptions_.expansionsPerTick);
+    }
+    pathfinding_.setOptions(pathOptions_);
 }
 
 void Simulation::tick(double dt) {

@@ -216,6 +216,59 @@ void testGarrisonOrder() {
     check(isd->garrisonedUnits.empty(), "Leave_Garrison empties the garrison");
 }
 
+void testGalacticMode() {
+    TfFixture fx;
+    fx.addFightersToForce();
+    eaw::SimState& state = fx.sim->sim();
+    // Two planets.
+    int tatooine = state.addPlanet("Tatooine", "EMPIRE", {0, 0, 0});
+    int endor = state.addPlanet("Endor", "REBEL", {500, 0, 0});
+    check(state.planet(tatooine) != nullptr && state.planet(endor) != nullptr,
+          "planets created");
+    check(state.findPlanet("Tatooine") != nullptr, "findPlanet by name");
+    check(state.findPlanet("Nope") == nullptr, "findPlanet unknown returns null");
+    check(state.forcePlanet(fx.forceId) == -1, "force starts at no planet");
+
+    {
+        lua_State* s = fx.sim->scripts().state();
+        eaw::pushWrapper(s, &state, eaw::WrapperKind::TaskForce, fx.forceId);
+        lua_setglobal(s, "force");
+    }
+    fx.sim->scripts().runScript(
+        "p = FindPlanet('Endor')\n"
+        "name = p:Get_Name()\n"
+        "owner = p:Get_Owner()\n"
+        "owner_name = owner:Get_Faction_Name()\n"
+        "force:Move_To(p)\n"
+        "fp = force:Get_Planet()\n"
+        "fp_name = fp:Get_Name()\n");
+    lua_getglobal(fx.sim->scripts().state(), "name");
+    check(std::string(lua_tostring(fx.sim->scripts().state(), -1)) == "Endor",
+          "FindPlanet + Get_Name");
+    lua_pop(fx.sim->scripts().state(), 1);
+    lua_getglobal(fx.sim->scripts().state(), "owner_name");
+    check(std::string(lua_tostring(fx.sim->scripts().state(), -1)) == "REBEL",
+          "planet owner faction");
+    lua_pop(fx.sim->scripts().state(), 1);
+    lua_getglobal(fx.sim->scripts().state(), "fp_name");
+    check(std::string(lua_tostring(fx.sim->scripts().state(), -1)) == "Endor",
+          "force moved to planet");
+    lua_pop(fx.sim->scripts().state(), 1);
+    check(state.forcePlanet(fx.forceId) == endor, "force planet id updated");
+    // Units teleported to the planet.
+    for (const eaw::GameObject* o : state.objectsOfType("X_WING")) {
+        check(o->position.x == 500.0, "units teleported to planet");
+    }
+}
+
+void testFindPlanetNil() {
+    TfFixture fx;
+    fx.sim->scripts().runScript("p = FindPlanet('Missing')\n");
+    lua_getglobal(fx.sim->scripts().state(), "p");
+    check(lua_isnil(fx.sim->scripts().state(), -1), "FindPlanet missing returns nil");
+    lua_pop(fx.sim->scripts().state(), 1);
+}
+
 } // namespace
 
 int main() {
@@ -226,6 +279,8 @@ int main() {
     testCollectiveOrders();
     testReleaseAndPrune();
     testGarrisonOrder();
+    testGalacticMode();
+    testFindPlanetNil();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;

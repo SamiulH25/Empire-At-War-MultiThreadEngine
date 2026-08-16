@@ -17,9 +17,53 @@ void pushTaskForce(lua_State* s, SimState* sim, const TaskForce* f) {
     pushWrapper(s, sim, WrapperKind::TaskForce, f->id);
 }
 
+void pushPlanet(lua_State* s, SimState* sim, const Planet* p) {
+    if (!p) { lua_pushnil(s); return; }
+    pushWrapper(s, sim, WrapperKind::Planet, p->id);
+}
+
 const TaskForce* wrapperForce(lua_State* s, Wrapper* w) {
     if (w->kind != WrapperKind::TaskForce) return nullptr;
     return w->sim->taskForce(w->id);
+}
+
+// ---- galactic mode --------------------------------------------------------
+
+int findPlanet(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    const char* name = luaL_checkstring(s, 1);
+    pushPlanet(s, sim, sim->findPlanet(name));
+    return 1;
+}
+
+int planetGetName(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (w->kind != WrapperKind::Planet) { lua_pushnil(s); return 1; }
+    const Planet* p = w->sim->planet(w->id);
+    if (!p) { lua_pushnil(s); return 1; }
+    lua_pushstring(s, p->name.c_str());
+    return 1;
+}
+
+int planetGetOwner(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (w->kind != WrapperKind::Planet) { lua_pushnil(s); return 1; }
+    const Planet* p = w->sim->planet(w->id);
+    if (!p || p->factionName.empty()) { lua_pushnil(s); return 1; }
+    const Player* pl = w->sim->findPlayer(p->factionName);
+    if (!pl) { lua_pushnil(s); return 1; }
+    pushWrapper(s, w->sim, WrapperKind::Player, pl->id);
+    return 1;
+}
+
+// Galactic move is handled inside tfMoveTo (planet target); tfGetPlanet
+// reports the force's current planet.
+int tfGetPlanet(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const TaskForce* f = wrapperForce(s, w);
+    if (!f || f->planetId < 0) { lua_pushnil(s); return 1; }
+    pushPlanet(s, w->sim, w->sim->planet(f->planetId));
+    return 1;
 }
 
 // ---- queries -------------------------------------------------------------
@@ -136,6 +180,21 @@ int tfMoveTo(lua_State* s) {
     Wrapper* w = checkWrapper(s, 1);
     TaskForce* f = w->sim->taskForce(w->id);
     if (!f) { lua_pushnil(s); return 1; }
+    // Galactic mode: moving to a planet relocates the force there.
+    if (lua_isuserdata(s, 2)) {
+        Wrapper* t = checkWrapper(s, 2);
+        if (t->kind == WrapperKind::Planet) {
+            const Planet* p = w->sim->planet(t->id);
+            if (!p) { lua_pushnil(s); return 1; }
+            f->planetId = p->id;
+            for (int id : f->units) {
+                GameObject* o = w->sim->object(id);
+                if (o) o->position = p->position;
+            }
+            pushCommandBlock(s, w->sim, 0);
+            return 1;
+        }
+    }
     Vec3 target;
     if (!targetPosition(s, 2, target)) { lua_pushnil(s); return 1; }
     for (int id : f->units) {
@@ -210,20 +269,27 @@ const struct { const char* name; lua_CFunction fn; } kTfMethods[] = {
     {"Attack_Target", tfAttackTarget},
     {"Garrison", tfGarrison},
     {"Leave_Garrison", tfLeaveGarrison},
+    // Galactic mode.
+    {"Get_Planet", tfGetPlanet},
+};
+
+const struct { const char* name; lua_CFunction fn; } kPlanetMethods[] = {
+    {"Get_Name", planetGetName},
+    {"Get_Owner", planetGetOwner},
 };
 
 } // namespace
 
 void registerTaskForceBindings(LuaHost& lua, SimState& sim) {
     lua_State* s = lua.state();
-    (void)sim;
 
-    // Add the taskforce methods to the shared wrapper metatable's __index.
-    // The metatable already exists (created by registerObjectBindings);
-    // we extend the dispatch by registering a per-kind lookup table. The
-    // wrapperIndex function is in pg_object_bindings; to keep dispatch in
-    // one place, we store the methods in a registry table keyed by kind and
-    // let that module's __index check it.
+    // FindPlanet (galactic mode) gets the sim as an upvalue.
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, findPlanet, 1);
+    lua_setglobal(s, "FindPlanet");
+
+    // Add the taskforce + planet methods to the shared wrapper metatable's
+    // __index via the __PgWrapperMethods registry table (kind -> name -> fn).
     lua_getfield(s, LUA_REGISTRYINDEX, "__PgWrapperMethods");
     if (lua_isnil(s, -1)) {
         lua_pop(s, 1);
@@ -231,6 +297,13 @@ void registerTaskForceBindings(LuaHost& lua, SimState& sim) {
         lua_pushinteger(s, 6);           // TaskForce kind
         lua_newtable(s);
         for (const auto& m : kTfMethods) {
+            lua_pushcfunction(s, m.fn);
+            lua_setfield(s, -2, m.name);
+        }
+        lua_settable(s, -3);
+        lua_pushinteger(s, 7);           // Planet kind
+        lua_newtable(s);
+        for (const auto& m : kPlanetMethods) {
             lua_pushcfunction(s, m.fn);
             lua_setfield(s, -2, m.name);
         }

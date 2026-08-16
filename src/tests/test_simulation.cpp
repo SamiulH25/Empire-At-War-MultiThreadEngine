@@ -230,6 +230,36 @@ void testUnitNavigatesAroundObstacle() {
     check(unit && unit->position.x > 99.0, "unit crossed to the far side");
 }
 
+void testConfigureGameConstants() {
+    // GameConstants.xml pathfinding knobs must reach the pathfinding system.
+    const char* xml =
+        "<GameConstants>\n"
+        "  <SpacePathfindMaxExpansions>1234</SpacePathfindMaxExpansions>\n"
+        "  <SpacePathFailureMaxExpansionsCoefficient>10.0</SpacePathFailureMaxExpansionsCoefficient>\n"
+        "  <FramesPerCollisionCheck>4</FramesPerCollisionCheck>\n"
+        "</GameConstants>\n";
+    eaw::GameConstants gc = eaw::GameConstants::Parse(xml);
+    check(gc.spacePathfindMaxExpansions == 1234, "parsed expansion budget");
+    check(gc.framesPerCollisionCheck == 4, "parsed collision frames");
+
+    eaw::Simulation sim;
+    sim.configure(gc);
+    check(sim.pathOptions().expansionsPerTick == 1234,
+          "expansion budget applied to pathfinding");
+    check(sim.pathOptions().maxTotalExpansions == 12340,
+          "failure cap scaled by coefficient");
+}
+
+void testConfigureDefaultsUnchanged() {
+    // Empty constants must not clobber the defaults.
+    const char* xml = "<GameConstants></GameConstants>\n";
+    eaw::GameConstants gc = eaw::GameConstants::Parse(xml);
+    eaw::Simulation sim;
+    sim.configure(gc);
+    check(sim.pathOptions().expansionsPerTick == 400,
+          "default budget retained when unset");
+}
+
 } // namespace
 
 int main() {
@@ -241,6 +271,8 @@ int main() {
     testParallelMoveToIntegration();
     testParallelDeterminism();
     testUnitNavigatesAroundObstacle();
+    testConfigureGameConstants();
+    testConfigureDefaultsUnchanged();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;

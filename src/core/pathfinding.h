@@ -43,6 +43,10 @@ public:
     PathfindingSystem(const PathGrid& grid, JobSystem& jobs, Options opt);
     PathfindingSystem(const PathGrid& grid, JobSystem& jobs);
 
+    // Replaces the tuning options (expansion budget etc.) — safe between
+    // ticks, never mid-search.
+    void setOptions(Options opt) { opt_ = opt; }
+
     // Begins a search from start to goal (world coords, full 3D). Returns a
     // search id (>0). Stepped by tick() until done/failed.
     int request(const Vec3& start, const Vec3& goal);

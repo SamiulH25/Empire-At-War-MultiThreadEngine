@@ -11,6 +11,7 @@
 // per-object subsystems parallelize inside it later.
 #pragma once
 
+#include "core/game_constants.h"
 #include "core/job_system.h"
 #include "core/meg_manager.h"
 #include "core/object_model.h"
@@ -35,6 +36,13 @@ public:
     JobSystem& jobs() { return jobs_; }
     PathGrid& pathGrid() { return grid_; }
     PathfindingSystem& pathfinding() { return pathfinding_; }
+
+    // Applies game tuning constants (from GameConstants.xml). Currently:
+    //  - pathfinding expansion budget (SpacePathfindMaxExpansions)
+    void configure(const GameConstants& gc);
+
+    // The configured pathfinding options (for telemetry).
+    const PathfindingSystem::Options& pathOptions() const { return pathOptions_; }
 
     // Advances the sim by dt seconds: time += dt, pump scripts, then run the
     // parallel object update (per-object slices on the worker pool), the
@@ -67,6 +75,7 @@ private:
     JobSystem jobs_;
     // 3D routing grid: 256x256x64 altitude bands at 2-unit cells.
     PathGrid grid_{256, 256, 64, 2.0};
+    PathfindingSystem::Options pathOptions_;
     PathfindingSystem pathfinding_;
     double time_ = 0.0;
     unsigned long long updateTicks_ = 0;

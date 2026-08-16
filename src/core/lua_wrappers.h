@@ -22,6 +22,7 @@ enum class WrapperKind : int {
     Position = 4,
     Command = 5,
     TaskForce = 6,
+    Planet = 7,
 };
 
 struct Wrapper {
