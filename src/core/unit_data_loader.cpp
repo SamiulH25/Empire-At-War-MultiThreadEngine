@@ -48,9 +48,12 @@ std::string childText(const XmlNode& node, const std::string& tag) {
 std::vector<ObjectType> UnitDataLoader::loadXml(const std::string& xmlText) {
     std::vector<ObjectType> out;
     XmlNode root = ParseXml(xmlText);
-    // The root is the aggregate (e.g. <FighterUnits>); children are units.
+    // The root is the aggregate (e.g. <FighterUnits>, <Juggernaut_Data>);
+    // children are units. Land units use <GroundVehicle> (infantry included);
+    // space units use <SpaceUnit>; <LandUnit> also accepted.
     for (const XmlNode& unit : root.children) {
-        if (unit.name == "SpaceUnit" || unit.name == "LandUnit") {
+        if (unit.name == "SpaceUnit" || unit.name == "LandUnit" ||
+            unit.name == "GroundVehicle") {
             loadUnitNode(unit, unit.name == "SpaceUnit", out);
         }
     }

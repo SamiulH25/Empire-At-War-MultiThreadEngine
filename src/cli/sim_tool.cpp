@@ -31,6 +31,7 @@ struct BattleConfig {
     int fighters = 24;    // per side
     int escorts = 0;      // per side (corvettes)
     int capitals = 4;     // per side
+    bool land = false;    // land battle (infantry + vehicles)
     const char* gameRoot = ""; // game Data dir for real unit XML (optional)
 };
 
@@ -106,21 +107,23 @@ void loadUnitTypes(eaw::SimState& state, const char* gameRoot) {
 }
 
 // Spawns one side's fleet in a loose formation around (cx, cy). Only spawns
-// types that exist in the sim (real-data load may lack some names).
+// types that exist in the sim (real-data load may lack some names). `spacing`
+// is the gap between units (12 = space scale, 4 = land scale).
 void spawnFleet(eaw::SimState& sim, const std::string& fighterType,
                 const std::string& capitalType, int playerId,
-                int fighters, int capitals, double cx, double cy) {
+                int fighters, int capitals, double cx, double cy,
+                double spacing = 12.0) {
     for (int i = 0; i < fighters; ++i) {
         if (!sim.type(fighterType)) break;
-        double x = cx + (i % 8) * 12.0;
-        double y = cy + (i / 8) * 12.0;
+        double x = cx + (i % 8) * spacing;
+        double y = cy + (i / 8) * spacing;
         double z = (i % 3) * 15.0; // stacked altitudes — 3D battle
         sim.addObject(fighterType, playerId, {x, y, z});
     }
     for (int i = 0; i < capitals; ++i) {
         if (!sim.type(capitalType)) break;
-        double x = cx + (i % 2) * 40.0;
-        double y = cy + (i / 2) * 40.0;
+        double x = cx + (i % 2) * spacing * 3.0;
+        double y = cy + (i / 2) * spacing * 3.0;
         sim.addObject(capitalType, playerId, {x, y, 10.0});
     }
 }
@@ -193,6 +196,102 @@ void pickFleetTypes(eaw::SimState& state, bool realData,
     empireEscort = "";
 }
 
+// Loads land unit stats from the real game XML (GroundVehicle blocks in the
+// UNITS_LAND_*/MOBILE_DEFENSE_UNITS/TRANSPORTUNITS files), falling back to
+// hand-tuned defaults.
+void loadLandTypes(eaw::SimState& state, const char* gameRoot) {
+    bool loaded = false;
+    if (gameRoot && *gameRoot) {
+        eaw::UnitDataLoader loader;
+        std::string base = std::string(gameRoot) + "\\Data\\";
+        const char* files[] = {"UNITS_LAND_EMPIRE_DARKTROOPERS.XML",
+                               "UNITS_LAND_EMPIRE_JUGGERNAUT.XML",
+                               "UNITS_LAND_EMPIRE_LANCET.XML",
+                               "UNITS_LAND_EMPIRE_NOGHRI.XML",
+                               "MOBILE_DEFENSE_UNITS.XML",
+                               "TRANSPORTUNITS.XML"};
+        std::vector<eaw::ObjectType> all;
+        for (const char* file : files) {
+            std::string xml = readFile((base + file).c_str());
+            if (!xml.empty()) {
+                try {
+                    auto types = loader.loadXml(xml);
+                    all.insert(all.end(), types.begin(), types.end());
+                } catch (const std::exception&) {
+                    // fall through
+                }
+            }
+        }
+        for (auto& t : all) {
+            if (t.damage > 0.0 && t.maxRange > 0.0) {
+                state.addType(std::move(t));
+                loaded = true;
+            }
+        }
+    }
+    if (!loaded) {
+        addType(state, "REBEL_INFANTRY", 0.020, 1.0, 100);
+        addType(state, "REBEL_VEHICLE", 0.030, 0.5, 200);
+        addType(state, "EMPIRE_INFANTRY", 0.022, 1.0, 100);
+        addType(state, "EMPIRE_VEHICLE", 0.033, 0.5, 200);
+    }
+}
+
+// Picks infantry/vehicle names for a land battle.
+void pickLandTypes(eaw::SimState& state, bool realData,
+                   std::string& rebelInf, std::string& rebelVeh,
+                   std::string& empireInf, std::string& empireVeh) {
+    if (realData) {
+        const char* rI[] = {"Dark_Trooper_PhaseI", "Dark_Trooper_PhaseII", nullptr};
+        const char* eI[] = {"Dark_Trooper_PhaseI", "Dark_Trooper_PhaseII", nullptr};
+        const char* rV[] = {"HAV_Juggernaut", "Lancet", nullptr};
+        const char* eV[] = {"HAV_Juggernaut", "Lancet", nullptr};
+        auto pick = [&](const char* const* names) -> std::string {
+            for (int i = 0; names[i]; ++i) {
+                if (state.type(names[i])) return names[i];
+            }
+            for (const std::string& n : state.typeNames()) {
+                const eaw::ObjectType* t = state.type(n);
+                if (t && t->damage > 0) return n;
+            }
+            return "";
+        };
+        rebelInf = pick(rI);
+        empireInf = pick(eI);
+        rebelVeh = pick(rV);
+        empireVeh = pick(eV);
+        return;
+    }
+    rebelInf = "REBEL_INFANTRY";
+    rebelVeh = "REBEL_VEHICLE";
+    empireInf = "EMPIRE_INFANTRY";
+    empireVeh = "EMPIRE_VEHICLE";
+}
+
+// Orders a land battle: everyone attacks the nearest enemy class.
+void orderLandAttack(eaw::ScriptManager& scripts, const std::string& rebelInf,
+                     const std::string& rebelVeh, const std::string& empireInf,
+                     const std::string& empireVeh) {
+    std::string s =
+        "for i, o in ipairs(Find_All_Objects_Of_Type('" + rebelInf + "')) do\n"
+        "  o:Attack_Target(Find_First_Object('" + empireInf + "'))\n"
+        "  o:Move_To(Find_First_Object('" + empireVeh + "'))\n"
+        "end\n"
+        "for i, o in ipairs(Find_All_Objects_Of_Type('" + rebelVeh + "')) do\n"
+        "  o:Attack_Target(Find_First_Object('" + empireVeh + "'))\n"
+        "  o:Move_To(Find_First_Object('" + empireInf + "'))\n"
+        "end\n"
+        "for i, o in ipairs(Find_All_Objects_Of_Type('" + empireInf + "')) do\n"
+        "  o:Attack_Target(Find_First_Object('" + rebelInf + "'))\n"
+        "  o:Move_To(Find_First_Object('" + rebelVeh + "'))\n"
+        "end\n"
+        "for i, o in ipairs(Find_All_Objects_Of_Type('" + empireVeh + "')) do\n"
+        "  o:Attack_Target(Find_First_Object('" + rebelVeh + "'))\n"
+        "  o:Move_To(Find_First_Object('" + rebelInf + "'))\n"
+        "end\n";
+    scripts.runScript(s);
+}
+
 BattleResult runBattle(const BattleConfig& cfg) {
     eaw::Simulation sim(cfg.workers);
     eaw::SimState& state = sim.sim();
@@ -200,6 +299,67 @@ BattleResult runBattle(const BattleConfig& cfg) {
     eaw::Player& rebel = state.addPlayer("Rebel Alliance", "REBEL");
     eaw::Player& empire = state.addPlayer("Galactic Empire", "EMPIRE");
     rebel.human = true;
+
+    if (cfg.land) {
+        loadLandTypes(state, cfg.gameRoot);
+        bool realData = state.type("HAV_Juggernaut") ||
+                        state.type("Dark_Trooper_PhaseI");
+        std::string rebelInf, rebelVeh, empireInf, empireVeh;
+        pickLandTypes(state, realData, rebelInf, rebelVeh, empireInf, empireVeh);
+        auto ensureType = [&](std::string& name, const char* fallbackName,
+                              double dmg, double rate, double range) {
+            if (name.empty() || !state.type(name)) {
+                addType(state, fallbackName, dmg, rate, range);
+                name = fallbackName;
+            }
+        };
+        ensureType(rebelInf, "REBEL_INFANTRY", 0.020, 1.0, 100);
+        ensureType(rebelVeh, "REBEL_VEHICLE", 0.030, 0.5, 200);
+        ensureType(empireInf, "EMPIRE_INFANTRY", 0.022, 1.0, 100);
+        ensureType(empireVeh, "EMPIRE_VEHICLE", 0.033, 0.5, 200);
+        // Land maps are smaller: compact formation, forces start closer.
+        spawnFleet(state, rebelInf, rebelVeh, rebel.id,
+                   cfg.fighters, cfg.capitals, 0, 0, 4.0);
+        spawnFleet(state, empireInf, empireVeh, empire.id,
+                   cfg.fighters, cfg.capitals, 60, 0, 4.0);
+        orderLandAttack(sim.scripts(), rebelInf, rebelVeh, empireInf, empireVeh);
+        std::printf("  fleets      : %s x%d + %s x%d vs %s x%d + %s x%d%s\n",
+                    rebelInf.c_str(), cfg.fighters, rebelVeh.c_str(),
+                    cfg.capitals, empireInf.c_str(), cfg.fighters,
+                    empireVeh.c_str(), cfg.capitals,
+                    realData ? " [real game data]" : "");
+        BattleResult res;
+        res.rebelStart = cfg.fighters + cfg.capitals;
+        res.empireStart = cfg.fighters + cfg.capitals;
+        auto t0 = std::chrono::steady_clock::now();
+        const double dt = 1.0 / 30.0;
+        for (int i = 0; i < cfg.ticks; ++i) {
+            sim.tick(dt);
+            int rebelAlive = 0, empireAlive = 0;
+            for (const eaw::GameObject* o : state.allObjects()) {
+                if (!o->alive) continue;
+                const eaw::Player* p = state.player(o->playerId);
+                if (p && p->factionName == "REBEL") ++rebelAlive;
+                else if (p && p->factionName == "EMPIRE") ++empireAlive;
+            }
+            if (rebelAlive == 0 || empireAlive == 0) {
+                res.decisive = true;
+                res.ticks = i + 1;
+                res.rebelAlive = rebelAlive;
+                res.empireAlive = empireAlive;
+                break;
+            }
+            res.rebelAlive = rebelAlive;
+            res.empireAlive = empireAlive;
+            res.ticks = i + 1;
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        res.wallMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        res.simTime = res.ticks * dt;
+        res.ticksPerSec = res.ticks / (res.wallMs / 1000.0);
+        res.shots = sim.totalShots();
+        return res;
+    }
 
     loadUnitTypes(state, cfg.gameRoot);
     bool realData = state.type("X-Wing") || state.type("TIE_Fighter") ||
@@ -332,7 +492,7 @@ int cmdCompare(const BattleConfig& base) {
 void usage() {
     std::printf("usage:\n"
                 "  sim_tool battle [--workers N] [--ticks N] [--fighters N] [--escorts N]\n"
-                "                [--capitals N] [--game <dir-with-Data\\*.XML>]\n"
+                "                [--capitals N] [--game <dir-with-Data\\*.XML>] [--land]\n"
                 "  sim_tool battle --compare\n");
 }
 
@@ -355,6 +515,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--escorts") == 0) cfg.escorts = std::atoi(need("--escorts"));
         else if (std::strcmp(argv[i], "--capitals") == 0) cfg.capitals = std::atoi(need("--capitals"));
         else if (std::strcmp(argv[i], "--game") == 0) cfg.gameRoot = need("--game");
+        else if (std::strcmp(argv[i], "--land") == 0) cfg.land = true;
         else if (std::strcmp(argv[i], "--compare") == 0) compare = true;
         else { std::fprintf(stderr, "unknown option: %s\n", argv[i]); return 1; }
     }
