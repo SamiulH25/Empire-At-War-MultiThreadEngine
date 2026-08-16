@@ -8,7 +8,7 @@
 
 **Architecture:** Research → findings docs → .meg parser (Python) → threading design → C++20 proxy DLL (d3d9.dll) injected into `StarWarsG.exe` that hooks the sim tick and proves one parallel slice.
 
-**Tech Stack:** Ghidra 11.x (static analysis), x64dbg + Windows Performance Recorder (dynamic), Python 3 + pefile (research tooling), C++20 + CMake + MinGW-w64 (DLL), MinHook (detours), git + GitHub.
+**Tech Stack:** Ghidra 11.x (static analysis), x64dbg + Windows Performance Recorder (dynamic), Python 3 + pefile (research tooling), C++20 + CMake + MinGW-w64 (native Windows DLL), MinHook (detours), git + GitHub. Portable core also builds natively on Linux (GCC/Clang).
 
 ## Global Constraints
 
@@ -17,27 +17,16 @@
 - Game files are reference data, not repo content. Read from disk, document findings in `docs/research/`.
 - All research findings go under `docs/research/`. All research code goes under `scripts/` (Python) or `src/` (C++).
 - Spec that this plan implements: `docs/superpowers/specs/2026-08-15-eaw-multithread-engine-design.md`
-- **Machines:** the game files live on a Linux box; the game *runs* on a Windows box. Both have a clone of this repo. Which machine a task uses is stated in the task header:
-  - Phase 0: Windows (toolchain), Linux (game-file verification)
-  - Phase 1: Linux (game files + Ghidra headless)
+- **Machines:** all work happens on Windows (game files + game runtime live there). Portable core additionally builds on Linux natively when desired. Task headers say which machine a task uses:
+  - Phase 0: Windows (toolchain + game-file verification)
+  - Phase 1: Windows (game files + Ghidra)
   - Phase 2: Windows (the game runs there)
-  - Phase 3: Linux (game files)
+  - Phase 3: Windows (game files)
   - Phase 4: either (doc edits only) — use Windows
   - Phase 5: Windows (game runtime)
   - Phase 6: Windows
-- **Repo coordination:** before starting work on a machine, run `git pull`. After committing, run `git push origin main` so the other machine stays in sync. Phase headers repeat this.
-- **Commit recipe (use for every task):** on Linux/macOS:
-  ```bash
-  git add <files>
-  git commit -F - <<'EOF'
-  <type>: <short description>
-  
-  <one or two lines of detail>
-  
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
-  ```
-  On Windows PowerShell (heredocs don't work the same; write the message to a file):
+- **Repo coordination:** before starting work, run `git pull`. After committing, run `git push origin main`. Phase headers repeat this.
+- **Commit recipe (use for every task):** Windows PowerShell (heredocs don't work in cmd; write the message to a file):
   ```powershell
   Set-Content -Path .gitmessage -Value "feat: short description`n`ndetail line`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add <files>
@@ -48,9 +37,8 @@
 ## Shared Facts (repeat these wherever a task needs them)
 
 **Game install paths:**
-- Linux: `/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War`
-- Windows: find via Steam → right-click game → Manage → Browse local files (usually `C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War`). The path contains spaces — always quote it in commands.
-- Repo clone (Linux): `/home/bob2142/Dev/Le Passion/Empire At War MultiTHreadEngine`
+- Windows: Steam → right-click game → Manage → Browse local files. Default is `C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War`. The path contains spaces — always quote it in commands.
+- Repo clone: `C:\Dev\Empire-At-War-MultiThreadEngine`
 
 **Key binaries (paths relative to game root):**
 - Base game exe: `GameData/StarWarsG.exe` — x86-64 PE32+, image base 0x140000000, entry VA 0x1406CC318, image size 0xBD8000, 7 sections
@@ -89,7 +77,7 @@ Offset 0x09: entry name in UTF-16LE, e.g. "DATA\SCRIPTS\AI\AI_PLAN_EXPANSIONGENE
 
 ## Phase 0 — Toolchain & Workspace Setup
 
-**Machine:** Windows (game-files checks in Task 0.3 also run on Linux). `git pull` on both machines before starting.
+**Machine:** Windows. `git pull` before starting.
 
 ### Task 0.1: Repo Setup on Windows
 
@@ -260,28 +248,18 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Run it on the Linux machine** (game files live there):
-  ```bash
-  python3 scripts/verify_install.py "/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War"
-  ```
-  Expected: every line starts with `[OK]`, exit code 0. If any `MISMATCH`: STOP — the game files differ from the research docs; update `docs/research/01-binary-map.md` with the real values first.
-
-- [ ] **Step 3: Run it on Windows** (after copying the script over via the repo — `git pull` first):
+- [ ] **Step 2: Run it on Windows** (game files live here):
   ```powershell
   python scripts\verify_install.py "C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War"
   ```
-  Expected: same `[OK]` lines, exit code 0. If the path is wrong, find the real one via Steam → Manage → Browse local files.
+  Expected: every line starts with `[OK]`, exit code 0. If any `MISMATCH`: STOP — the game files differ from the research docs; update `docs/research/01-binary-map.md` with the real values first. If the path is wrong, find the real one via Steam → Manage → Browse local files.
 
-- [ ] **Step 4: Commit** (from whichever machine has the committed file — do this on Linux):
-  ```bash
+- [ ] **Step 3: Commit:**
+  ```powershell
+  Set-Content -Path .gitmessage -Value "feat: add install verification script`n`nChecks PE facts and meg header counts against documented values, on any OS.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add scripts/verify_install.py
-  git commit -F - <<'EOF'
-  feat: add install verification script
-
-  Checks PE facts and meg header counts against documented values, on any OS.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -289,7 +267,7 @@ if __name__ == "__main__":
 
 ## Phase 1 — Static Analysis
 
-**Machine:** Linux (game files + Ghidra headless live there). `git pull` before starting.
+**Machine:** Windows (game files + Ghidra live there). `git pull` before starting.
 
 ### Task 1.1: String Census of All Binaries
 
@@ -379,25 +357,20 @@ if __name__ == "__main__":
 ```
 
 - [ ] **Step 2: Run it:**
-  ```bash
-  cd /home/bob2142/Dev/Le\ Passion/Empire\ At\ War\ MultiTHreadEngine
-  python3 scripts/string_census.py "/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War" "$(pwd)/docs/research/01-string-census.md"
+  ```powershell
+  cd C:\Dev\Empire-At-War-MultiThreadEngine
+  python scripts\string_census.py "C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War" "docs\research\01-string-census.md"
   ```
-  Expected: prints `wrote .../01-string-census.md`; the file contains a `### threading` section for `corruption/StarWarsG.exe` with at least these entries: `ThreadLockMutexClass ...`, `LoadThread`, `LuaCreateThread`.
+  Expected: prints `wrote ...\01-string-census.md`; the file contains a `### threading` section for `corruption/StarWarsG.exe` with at least these entries: `ThreadLockMutexClass ...`, `LoadThread`, `LuaCreateThread`.
 
 - [ ] **Step 3: Merge into the binary map doc.** Append a "## String Census" section to `docs/research/01-binary-map.md` with a link to the generated file and a hand-written table of the 15 most relevant threading strings across all binaries (copy from the generated md). No TBDs — only strings that were actually found.
 
 - [ ] **Step 4: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "feat: string census of all game binaries`n`nClassified threading, lua, megafile, pathfinding, perception, and job/worker`n`nstrings with file offsets for both 64-bit exes, the perception DLLs, and swfoc.exe.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add scripts/string_census.py docs/research/01-string-census.md docs/research/01-binary-map.md
-  git commit -F - <<'EOF'
-  feat: string census of all game binaries
-
-  Classified threading, lua, megafile, pathfinding, perception, and job/worker
-  strings with file offsets for both 64-bit exes, the perception DLLs, and swfoc.exe.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -458,36 +431,31 @@ if __name__ == "__main__":
 ```
 
 - [ ] **Step 2: Run it:**
-  ```bash
-  python3 scripts/pe_deepdive.py "/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War" > /tmp/pe_dive.txt 2>&1
+  ```powershell
+  python scripts\pe_deepdive.py "C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War" > C:\Temp\pe_dive.txt 2>&1
   ```
-  Expected: `/tmp/pe_dive.txt` shows 6 binaries; `corruption/StarWarsG.exe` imports `d3d9.dll (1 funcs)` and `PerceptionFunctionG.dll (10 funcs)`; `swfoc.exe` imports `tbbR.dll (16 funcs)`; `PerceptionFunctionG.dll` exports `Init_Perception_DLL`.
+  Expected: `C:\Temp\pe_dive.txt` shows 6 binaries; `corruption/StarWarsG.exe` imports `d3d9.dll (1 funcs)` and `PerceptionFunctionG.dll (10 funcs)`; `swfoc.exe` imports `tbbR.dll (16 funcs)`; `PerceptionFunctionG.dll` exports `Init_Perception_DLL`.
 
 - [ ] **Step 3: Update the doc.** In `docs/research/01-binary-map.md`, replace the current "Imports (18 DLLs)" list with a full formatted table per binary (DLL, func count, notes) copied from the script output. Add the exact `d3d9.dll` import name (expected: `Direct3DCreate9`) and the 10 `PerceptionFunctionG.dll` import names — write the real ones from the output, don't guess.
 
 - [ ] **Step 4: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "feat: PE deep-dive script and formalized import/export tables`n`nExact import/export surface for both exes, perception DLLs, swfoc.exe, tbbR.dll.`n`nConfirms d3d9 proxy surface and TBB linkage facts.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add scripts/pe_deepdive.py docs/research/01-binary-map.md
-  git commit -F - <<'EOF'
-  feat: PE deep-dive script and formalized import/export tables
-
-  Exact import/export surface for both exes, perception DLLs, swfoc.exe, tbbR.dll.
-  Confirms d3d9 proxy surface and TBB linkage facts.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
-### Task 1.3: Ghidra Headless Project + Auto-Analysis
+### Task 1.3: Ghidra Project + Auto-Analysis
 
 **Files:**
 - Create: `scripts/ghidra_import.py` (headless import script)
 - Modify: `docs/research/01-binary-map.md` (add "Ghidra Project Layout" section)
 
 **Interfaces:**
-- Consumes: Ghidra (install on Linux: `apt install ghidra` or download zip from https://github.com/NationalSecurityAgency/ghidra/releases), game install (Task 0.3)
-- Produces: a Ghidra project at `<repo>/ghidra/` containing `corruption_StarWarsG`, `GameData_StarWarsG`, `PerceptionFunctionG` — consumed by Tasks 1.4–1.7
+- Consumes: Ghidra (installed on Windows in Task 0.2, Step 3), game install (Task 0.3)
+- Produces: a Ghidra project at `<repo>\ghidra\` containing `corruption_StarWarsG`, `GameData_StarWarsG`, `PerceptionFunctionG` — consumed by Tasks 1.4–1.7
 
 - [ ] **Step 1: Create the headless import script `scripts/ghidra_import.py`:**
 
@@ -530,31 +498,26 @@ if __name__ == "__main__":
 ```
 
 - [ ] **Step 2: Run it:**
-  ```bash
-  cd /home/bob2142/Dev/Le\ Passion/Empire\ At\ War\ MultiTHreadEngine
-  mkdir -p ghidra
-  /path/to/ghidra/support/analyzeHeadless ghidra eawea -scriptPath scripts -postScript ghidra_import.py "/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War"
+  ```powershell
+  cd C:\Dev\Empire-At-War-MultiThreadEngine
+  mkdir ghidra
+  C:\Tools\ghidra\support\analyzeHeadless.bat ghidra eawea -scriptPath scripts -postScript ghidra_import.py "C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War"
   ```
   Expected: three `imported:` lines, no `FAILED`, no exception. Analysis takes several minutes for a 12 MB exe — don't interrupt it.
 
 - [ ] **Step 3: Add the project dir to .gitignore** (Ghidra projects are huge binary blobs; the scripts stay in git, the project stays local):
-  ```bash
-  echo "ghidra/" >> .gitignore
+  ```powershell
+  Add-Content .gitignore "ghidra/"
   ```
 
 - [ ] **Step 4: Document.** Add a "## Ghidra Project Layout" section to `docs/research/01-binary-map.md`: project path, program names, the analyzeHeadless command used, and a note that the project is local-only (gitignored), regenerable via `scripts/ghidra_import.py`.
 
 - [ ] **Step 5: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "feat: ghidra import script`n`nImports both StarWarsG.exe binaries and PerceptionFunctionG.dll with`n`nauto-analysis; project kept local, scripts in repo.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add scripts/ghidra_import.py docs/research/01-binary-map.md .gitignore
-  git commit -F - <<'EOF'
-  feat: ghidra headless import script
-
-  Imports both StarWarsG.exe binaries and PerceptionFunctionG.dll with
-  auto-analysis; project kept local, scripts in repo.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -567,7 +530,7 @@ if __name__ == "__main__":
 - Consumes: Ghidra project (Task 1.3), string census offsets (Task 1.1)
 - Produces: documented main loop address + phase call structure in doc 04 — consumed by Tasks 2.4, 5.3
 
-- [ ] **Step 1: Open the Ghidra project** on Linux (GUI via `ghidraRun` if a display is available, otherwise use headless analysis queries with `analyzeHeadless -process -noanalysis` plus scripts). Navigate to program `corruption_StarWarsG`, jump to the entry point VA `0x14076A428`.
+- [ ] **Step 1: Open the Ghidra project** on Windows (GUI via `C:\Tools\ghidra\ghidraRun.bat`, or use headless analysis queries with `analyzeHeadless.bat -process -noanalysis` plus scripts). Navigate to program `corruption_StarWarsG`, jump to the entry point VA `0x14076A428`.
 
 - [ ] **Step 2: Trace from entry.** The entry is CRT startup → `main`/`WinMain`. Steps to take, recording each function address you pass through:
   1. From the entry, follow the first call into `__scrt_common_main` (identifiable by calls to `GetStartupInfoW`, `GetCommandLineW`).
@@ -586,16 +549,11 @@ if __name__ == "__main__":
 - [ ] **Step 5: Verify the address is real.** Cross-check one phase: the render path should reach a function that calls the single `d3d9.dll` import `Direct3DCreate9` (address listed in `docs/research/01-binary-map.md` import table). If the path never reaches it, your loop is mislabeled — redo Step 3.
 
 - [ ] **Step 6: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "research: locate and document the main game loop`n`nEntry -> CRT -> WinMain -> EAW_GameLoop with phase call structure,`n`nlabels, and the sim tick / render / input split confirmed.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add docs/research/04-simulation-architecture.md
-  git commit -F - <<'EOF'
-  research: locate and document the main game loop
-
-  Entry -> CRT -> WinMain -> EAW_GameLoop with phase call structure,
-  labels, and the sim tick / render / input split confirmed.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -628,16 +586,11 @@ if __name__ == "__main__":
 - [ ] **Step 6: Verify.** Pick the call site that guards the most critical data (likely sim tick) and note it — it will be referenced by the threading design (doc 06). Sanity check: the count of call sites should be at least 5 for a game with load threading + megafile + object DB.
 
 - [ ] **Step 7: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "research: map ThreadLockMutexClass methods and call sites`n`nConstructor, acquire/release, underlying OS primitive, and every`n`ncall site with the data it guards.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add docs/research/01-binary-map.md
-  git commit -F - <<'EOF'
-  research: map ThreadLockMutexClass methods and call sites
-
-  Constructor, acquire/release, underlying OS primitive, and every
-  call site with the data it guards.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -663,16 +616,11 @@ if __name__ == "__main__":
 - [ ] **Step 6: Verify.** Count matches: every `CreateThread` xref must appear in the table. Compare your count against the number of `CreateThread` xrefs Ghidra shows — they must be equal.
 
 - [ ] **Step 7: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "research: map all thread creation sites`n`nEvery CreateThread/_beginthreadex xref, the LoadThread mechanism,`n`nand whether StarWarsG.exe itself links TBB (with evidence).`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add docs/research/01-binary-map.md
-  git commit -F - <<'EOF'
-  research: map all thread creation sites
-
-  Every CreateThread/_beginthreadex xref, the LoadThread mechanism,
-  and whether StarWarsG.exe itself links TBB (with evidence).
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -698,16 +646,11 @@ if __name__ == "__main__":
 - [ ] **Step 6: Verify.** Pick 3 binding names from your table and confirm each string's xref actually points into a registration table (not a log message). If xrefs are ambiguous, mark the binding "uncertain" rather than asserting it.
 
 - [ ] **Step 7: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "research: map the Lua surface of StarWarsG.exe`n`nLua version with evidence, state locations, LuaCreateThread mechanism,`n`nand the registered binding table.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add docs/research/03-lua-surface.md
-  git commit -F - <<'EOF'
-  research: map the Lua surface of StarWarsG.exe
-
-  Lua version with evidence, state locations, LuaCreateThread mechanism,
-  and the registered binding table.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -731,16 +674,11 @@ if __name__ == "__main__":
 - [ ] **Step 5: Verify.** Re-read the init call in the decompiler and confirm all 11 register arguments are accounted for in your table (count them).
 
 - [ ] **Step 6: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "research: map perception DLL interop and callback safety`n`nAll 11 engine callbacks identified and classified thread-safe/locked/unsafe;`n`nparallelism verdict for perception evaluation.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add docs/research/01-binary-map.md
-  git commit -F - <<'EOF'
-  research: map perception DLL interop and callback safety
-
-  All 11 engine callbacks identified and classified thread-safe/locked/unsafe;
-  parallelism verdict for perception evaluation.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -885,7 +823,7 @@ if __name__ == "__main__":
 
 ## Phase 3 — .meg Format
 
-**Machine:** Linux (game files live there). `git pull` before starting.
+**Machine:** Windows (game files live here). `git pull` before starting.
 
 ### Task 3.1: Decode the .meg Header and Entry Table
 
@@ -897,11 +835,11 @@ if __name__ == "__main__":
 - Produces: byte-level header spec in doc 02 — consumed by Tasks 3.2, 3.3
 
 - [ ] **Step 1: Hex-dump the first 512 bytes of three megas:**
-  ```bash
-  cd "/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War"
-  xxd -l 512 "corruption/Data/config.meg"  > /tmp/config.hdr
-  xxd -l 512 "corruption/Data/64Patch.meg" > /tmp/64patch.hdr
-  xxd -l 512 "corruption/Data/shaders.meg" > /tmp/shaders.hdr
+  ```powershell
+  $g = "C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War"
+  Format-Hex -Path "$g\corruption\Data\config.meg"  -Count 512 | Out-File config.hdr
+  Format-Hex -Path "$g\corruption\Data\64Patch.meg" -Count 512 | Out-File 64patch.hdr
+  Format-Hex -Path "$g\corruption\Data\shaders.meg" -Count 512 | Out-File shaders.hdr
   ```
 
 - [ ] **Step 2: Decode the structure.** Known so far: bytes 0–3 u32 count (1046 for config.meg), bytes 4–7 same count again, byte 8 = 0x42 ('B'), then UTF-16LE strings separated by 0x3D ('='). Answer these questions from the hex dumps:
@@ -922,19 +860,14 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Document the header spec.** Rewrite the "What We Know" section of `docs/research/02-meg-format.md` into a byte-level spec: field offsets, types, name encoding, separator, and the offset/size storage scheme you found. Include hex-dump excerpts as evidence. Write exactly what the bytes show, and explicitly list what is still unknown as "Open Questions" at the bottom.
 
-- [ ] **Step 5: Verify your spec by re-deriving it.** From your spec, predict the byte offset of the 3rd entry name in config.meg, then check with `xxd` that the name is exactly there.
+- [ ] **Step 5: Verify your spec by re-deriving it.** From your spec, predict the byte offset of the 3rd entry name in config.meg, then check with `Format-Hex` (or `xxd` if available) that the name is exactly there.
 
 - [ ] **Step 6: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "research: byte-level meg header spec`n`nCount fields, UTF-16LE name table, separator, and offset/size storage`n`nverified across config, 64Patch, and shaders megas.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add docs/research/02-meg-format.md
-  git commit -F - <<'EOF'
-  research: byte-level meg header spec
-
-  Count fields, UTF-16LE name table, separator, and offset/size storage
-  verified across config, 64Patch, and shaders megas.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -995,12 +928,12 @@ class MegaFile:
 - [ ] **Step 2: Replace the guess with the real layout.** The `pos`/offset-size lines above are a starting hypothesis. After your Task 3.1 hex analysis, rewrite `_parse_header` to match the real byte layout (the committed code must reflect the verified spec — remove the "verify/update" comments).
 
 - [ ] **Step 3: Smoke test.** Run:
-  ```bash
-  cd /home/bob2142/Dev/Le\ Passion/Empire\ At\ War\ MultiTHreadEngine
-  python3 -c "
+  ```powershell
+  cd C:\Dev\Empire-At-War-MultiThreadEngine
+  python -c "
   import sys; sys.path.insert(0, 'scripts')
   from meg_reader import MegaFile
-  mf = MegaFile('/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War/corruption/Data/shaders.meg')
+  mf = MegaFile(r'C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War\corruption\Data\shaders.meg')
   print('entries:', len(mf.names()))
   print('first 3:', mf.names()[:3])
   "
@@ -1010,16 +943,11 @@ class MegaFile:
 - [ ] **Step 4: Verify against the header spec.** The entry count must equal the u32 at offset 0. Reading every entry must not raise and must return non-empty bytes for at least 90% of entries.
 
 - [ ] **Step 5: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "feat: python meg archive reader`n`nMegaFile class: parse header, list names, read entries by name.`n`nVerified against shaders.meg (82 entries).`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add scripts/meg_reader.py
-  git commit -F - <<'EOF'
-  feat: python meg archive reader
-
-  MegaFile class: parse header, list names, read entries by name.
-  Verified against shaders.meg (82 entries).
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 
@@ -1066,33 +994,28 @@ if __name__ == "__main__":
 ```
 
 - [ ] **Step 2: Extract entries containing a known name.** The loose files `GameData/Data/*.txt` (e.g. `acclamator_assault_ship.txt`) should also exist inside `config.meg`:
-  ```bash
-  cd /home/bob2142/Dev/Le\ Passion/Empire\ At\ War\ MultiTHreadEngine/scripts
-  python3 meg_extract.py "/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War/corruption/Data/config.meg" /tmp/meg_out acclamator
+  ```powershell
+  cd C:\Dev\Empire-At-War-MultiThreadEngine\scripts
+  python meg_extract.py "C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War\corruption\Data\config.meg" C:\Temp\meg_out acclamator
   ```
   Expected: extracts at least one file containing `acclamator` in the name.
 
-- [ ] **Step 3: Compare extracted vs loose.** Pick one extracted file that has a loose counterpart in `GameData/Data/` and diff them:
-  ```bash
-  diff /tmp/meg_out/<extracted_path> "/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War/GameData/Data/<loose_name>.txt"
+- [ ] **Step 3: Compare extracted vs loose.** Pick one extracted file that has a loose counterpart in `GameData/Data/` and compare them:
+  ```powershell
+  Compare-Object (Get-Content "C:\Temp\meg_out\<extracted_path>") (Get-Content "C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War\GameData\Data\<loose_name>.txt")
   ```
-  If identical: the extraction is byte-perfect. If different but similar: the meg version is newer/older — note the difference. If completely different: the name mapping is wrong; fix the reader.
+  (or `fc /b` for byte compare). If identical: the extraction is byte-perfect. If different but similar: the meg version is newer/older — note the difference. If completely different: the name mapping is wrong; fix the reader.
 
 - [ ] **Step 4: Document verification results.** Add a "## Verification" section to `docs/research/02-meg-format.md`: which file was extracted, which loose file compared, diff result, and conclusion ("format spec confirmed byte-perfect" or what differed).
 
 - [ ] **Step 5: Verify round-trip.** Extract a file, re-parse the extracted bytes, confirm content sanity (e.g. an XML file starts with `<`, a Lua file contains `function`).
 
 - [ ] **Step 6: Commit:**
-  ```bash
+  ```powershell
+  Set-Content -Path .gitmessage -Value "feat: meg extractor CLI with loose-file verification`n`nExtracts entries by name; verified byte-perfect against loose GameData`n`nfiles. Format spec confirmed.`n`nCo-authored-by: CommandCodeBot <noreply@commandcode.ai>"
   git add scripts/meg_extract.py docs/research/02-meg-format.md
-  git commit -F - <<'EOF'
-  feat: meg extractor CLI with loose-file verification
-
-  Extracts entries by name; verified byte-perfect against loose GameData
-  files. Format spec confirmed.
-
-  Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
-  EOF
+  git commit -F .gitmessage
+  Remove-Item .gitmessage
   git push origin main
   ```
 

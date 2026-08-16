@@ -53,7 +53,7 @@ Part of the C++ sim tick (not exposed via the DLL). Details unknown until disass
 5. Memory layout of unit/object arrays (SOA vs AOS) — critical for cache behavior and
    parallel partitioning
 
-## Dynamic Analysis Plan (Wine or Windows)
+## Dynamic Analysis Plan (Windows)
 
 1. Attach debugger, break on main loop, count threads
 2. Sample CPU profiles during heavy battle (many units)

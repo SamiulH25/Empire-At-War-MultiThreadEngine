@@ -87,7 +87,7 @@ string lookup, megafile access) without direct engine linkage.
 
 ## Next Steps
 
-1. Install Ghidra headless + radare2
+1. Install Ghidra + radare2
 2. Full disassembly of `corruption/StarWarsG.exe`
 3. Find main loop, update tick, render path
 4. Locate `ThreadLockMutexClass` methods and all call sites

@@ -19,8 +19,8 @@ Build a multi-threaded engine for *Star Wars: Empire at War* (EAW) + *Forces of 
 | Goal | Hybrid: patch now, rebuild later |
 | Game version | Steam Gold Pack (64-bit remaster) |
 | Performance target | Everything — sim, rendering, loading, memory |
-| Development environment | Linux cross-compile to Windows |
-| Language | C++20 (MinGW cross-toolchain) |
+| Development environment | **Windows native** (primary), with portable core kept Linux-buildable |
+| Language | C++20 (MSVC or MinGW-w64 on Windows; GCC/Clang for Linux native builds) |
 | Mod compatibility | Must load Thrawn's Revenge, EAW Remake, and other XML/Lua mods |
 | Multiplayer | Single-player focus; netcode research deprioritized |
 | Work split | CommandCodeBot does all implementation work |
@@ -71,33 +71,32 @@ From first-pass PE analysis of the installed Steam files:
 | `docs/research/04-simulation-architecture.md` | Game loop + sim tick breakdown |
 | `docs/research/05-mod-compatibility.md` | Mod ecosystem contract |
 | `docs/research/06-threading-design.md` | The multi-threading proposal (job system, partitioning, sync) |
-| `docs/research/07-toolchain.md` | Cross-compile environment for the C++ patch DLL |
+| `docs/research/07-toolchain.md` | Native Windows toolchain for the C++ patch DLL (+ optional Linux native) |
 
 ### 4.3 Phases (ordered)
 
-1. **Static analysis** — Ghidra headless (scriptable on Linux) as primary disassembler; radare2 for quick lookups; string extraction; class map from `PerceptionFunctionG.dll` symbols.
-2. **Dynamic analysis** — run game under Wine with debugger; confirm game loop, watch threads at runtime, profile hotspots. *(Fallback if Wine is flaky: static-only + community knowledge.)*
+1. **Static analysis** — Ghidra (native Windows install) as primary disassembler; radare2 for quick lookups; string extraction; class map from `PerceptionFunctionG.dll` symbols.
+2. **Dynamic analysis** — run the game on Windows with a debugger (x64dbg); confirm game loop, watch threads at runtime, profile hotspots with Windows Performance Recorder.
 3. **Data format work** — Python .meg reader/extractor as first code deliverable.
 4. **Design synthesis** — threading design: what parallelizes (pathfinding, perception, particles, AI), what stays serialized, job system architecture.
 5. **Prototype spike** — minimal C++ DLL injected into StarWarsG.exe proving loop interception + one parallelized slice.
 
 ### 4.4 Tooling
 
-- **Disassembler:** Ghidra headless (primary), radare2 (quick lookups)
-- **Runtime:** Wine + debugger; `perf` sampling through Wine
+- **Disassembler:** Ghidra (primary), radare2 (quick lookups)
+- **Runtime:** x64dbg + Windows Performance Recorder (dynamic analysis)
 - **Research tooling:** Python 3 (`pefile` confirmed installed)
-- **Build:** CMake + MinGW x86_64 cross-toolchain, C++20
+- **Build:** CMake + C++20, native on Windows (MinGW-w64 or MSVC); portable core also builds on Linux with GCC/Clang
 - **Output:** Patch DLL (`d3d9.dll` proxy or launcher-injected DLL) — exact injection method decided in phase 5
 
 ## 5. Environment Facts
 
-- Game installed at: `/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War`
-- Linux host with Wine available (`/usr/bin/wine`)
-- g++ and clang present; **no MinGW cross-compiler yet** — install during toolchain research (doc 07)
-- Python 3 with `pefile` (no `lief` — optional)
-- No Ghidra/radare2 installed yet — install during phase 1
+- Game installed at: Steam → `steamapps/common/Star Wars Empire at War` (Windows)
+- **Primary dev machine is Windows** — native toolchain, native debugging, game runs here
+- Python 3 with `pefile` available
+- C++20 toolchain: CMake + MinGW-w64 (or MSVC); portable core additionally builds on Linux with GCC/Clang
+- Ghidra / x64dbg / WPR installed during phase 0
 - GitHub account: SamiulH25 (gh CLI authenticated)
-- Primary dev machine will be **Windows** (user shifts there after repo setup)
 
 ## 6. Success Criteria (Research Phase)
 
@@ -108,7 +107,7 @@ From first-pass PE analysis of the installed Steam files:
 - [ ] Simulation tick broken down into parallelizable vs. serial regions
 - [ ] Mod compatibility contract documented and verified against a real mod
 - [ ] Threading design written with concrete job-system proposal
-- [ ] Toolchain doc + buildable "hello" DLL from Linux cross-compile
+- [ ] Toolchain doc + buildable "hello" DLL natively on Windows
 - [ ] Prototype spike: DLL hooks the game loop (even if only logging FPS)
 
 ## 7. Out of Scope (Research Phase)

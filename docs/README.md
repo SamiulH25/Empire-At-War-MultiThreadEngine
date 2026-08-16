@@ -6,10 +6,10 @@
 - `scripts/` — research tooling (Python PE analysis, .meg extraction)
 - Future: `src/` for the C++ patch DLL (phase 5)
 
-## Game install location (Linux host)
+## Game install location (Windows host)
 
 ```
-/home/bob2142/.local/share/Steam/steamapps/common/Star Wars Empire at War
+C:\Program Files (x86)\Steam\steamapps\common\Star Wars Empire at War
 ├── corruption/          # Forces of Corruption (64-bit exe here)
 │   ├── StarWarsG.exe
 │   ├── swfoc.exe
@@ -24,12 +24,16 @@
 └── runme2.exe
 ```
 
+Development is native on Windows (the game runs here). The portable core (job system,
+sim logic, .meg tooling) is also kept buildable as a native Linux executable — no
+cross-compiling.
+
 ## Useful commands
 
-```bash
+```powershell
 # PE analysis (Python)
-python3 -c "import pefile; pe = pefile.PE('path/to/exe'); pe.print_info()"
+python -c "import pefile; pe = pefile.PE('path/to/exe'); pe.print_info()"
 
 # Hex-dump a meg header
-xxd -l 256 path/to/config.meg
+Format-Hex -Path path\to\config.meg -Count 256
 ```

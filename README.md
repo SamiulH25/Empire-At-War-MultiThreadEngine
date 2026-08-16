@@ -35,8 +35,9 @@ Research phase — static and dynamic analysis of the remaster binary.
 
 ## Planned Toolchain
 
-C++20, cross-compiled from Linux with MinGW to a Windows DLL. CMake build.
-Research tooling: Ghidra headless + radare2 + Python (`pefile`).
+C++20, built natively on Windows (MinGW-w64 or MSVC) targeting a Windows DLL. The
+portable core also builds natively on Linux with GCC/Clang — no cross-compiling.
+Research tooling: Ghidra + x64dbg + Python (`pefile`).
 
 ## License
 
