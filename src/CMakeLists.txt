@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(eaw_engine CXX)
+project(eaw_engine C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Vendored Lua
+add_subdirectory(../third_party/lua ${CMAKE_BINARY_DIR}/lua)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -19,9 +22,11 @@ add_library(eaw_core STATIC
     core/xml.cpp
     core/game_constants.cpp
     core/job_system.cpp
+    core/lua_host.cpp
 )
 target_include_directories(eaw_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(eaw_core PUBLIC cxx_std_20)
+target_link_libraries(eaw_core PUBLIC lua)
 
 # CLI tools
 add_executable(meg_tool
@@ -53,3 +58,15 @@ add_executable(job_system_tests
 )
 target_link_libraries(job_system_tests PRIVATE eaw_core)
 add_test(NAME job_system_tests COMMAND job_system_tests)
+
+add_executable(lua_tests
+    tests/test_lua.cpp
+)
+target_link_libraries(lua_tests PRIVATE eaw_core)
+add_test(NAME lua_tests COMMAND lua_tests)
+
+# Real-game smoke test (needs the game install; run manually, not in ctest)
+add_executable(real_lua_test
+    tests/test_real_lua.cpp
+)
+target_link_libraries(real_lua_test PRIVATE eaw_core)

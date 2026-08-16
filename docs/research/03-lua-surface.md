@@ -1,7 +1,39 @@
 # 03 — Lua Integration Surface
 
-**Status:** Lua manager + thread mechanism located (2026-08-16) — version TBD
+**Status:** Lua manager + thread mechanism located; **bytecode compat issue found** (2026-08-16)
 **Last updated:** 2026-08-16
+
+## ⚠️ Key Compat Finding: Game Lua is a Custom Fork (2026-08-16)
+
+The game ships its AI scripts as **precompiled Lua bytecode** (not source). Verified by
+extracting `DATA\SCRIPTS\AI\BUILDGROUNDFORCESPLAN.LUA` from config.meg — it starts with
+the `\x1bLua` magic.
+
+The chunk header reveals a **non-vanilla Lua 5.1 build**:
+
+```
+game:   1b 4c 75 61 51 01 04 04 04 06 08 09 09 08 ...
+vanilla 1b 4c 75 61 51 01 04 04 04 04 08 00 00 00 ...
+                ^^  ^^  ^^  ^^  ^^  ^^  ^^  ^^
+```
+
+- `0x51` = Lua 5.1 (version matches vanilla)
+- `sizeof(Instruction) = 0x06` (vanilla: 0x04) — **non-standard instruction size**
+- `sizeof(lua_Number) = 0x08` (matches)
+- trailing `09 09 08` vs vanilla `00 00 00` — custom size fields
+
+**Conclusion:** Petroglyph compiled a modified Lua 5.1 (custom `Instruction` size /
+`lua_Number` layout). Vanilla Lua 5.1.5 **cannot load the game's bytecode** (verified:
+`bad header in precompiled chunk`).
+
+**Implications for the engine:**
+- The reimplementation **cannot execute the game's precompiled AI scripts** without
+  reimplementing the exact fork (opcode layout + VM semantics).
+- The mod-compat contract is affected: mods that ship **source** Lua work with any 5.1;
+  mods that ship the game's bytecode format only work with the fork.
+- Community docs (Alamo Engine Tools) document the *source-level* API (PGBase etc.) —
+  mods overwhelmingly ship source, so the engine should target **source Lua 5.1** and
+  document the bytecode limitation.
 
 ## What We Know
 
@@ -22,11 +54,9 @@
 ```
 
 These are standard Lua 5.x error/format strings. The 2006 original embedded Lua 5.0
-(specifically 5.0.2, per community knowledge). The 64-bit remaster's exact version is
-**TBD** — the embedded Lua runtime is the `FUN_1407b9xxx` function cluster (Lua C API
-calls: `FUN_1407b94a0` setglobal-ish, `FUN_1407b9510`, `FUN_1407b9a60`, `FUN_1407b9540`
-register-ish, `FUN_1407b8890`, `FUN_1407b8ef0`). Byte-level version check (opcode
-signature) is still pending.
+(specifically 5.0.2, per community knowledge). The 64-bit remaster's embedded runtime is
+the `FUN_1407b9xxx` function cluster (Lua C API calls). Bytecode header confirms **Lua 5.1
+with custom fork sizes**.
 
 ### Lua Script Manager — `FUN_1402488e0` (confirmed)
 
