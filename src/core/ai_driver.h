@@ -36,6 +36,13 @@ public:
     void produce(SimState& sim, int playerId,
                  const std::vector<std::string>& buildTypes);
 
+    // Multi-stage plan driver: advances each attack-goal taskforce through
+    // the stage machine — 0: assemble, 1: move to target planet, 2: attack
+    // enemies there, 3: done (Set_Plan_Result). Uses the taskforce's stage
+    // field, so scripts can inspect/adjust it. `targetPlanetId` names the
+    // destination for the move stage.
+    void runPlan(SimState& sim, int forceId, int targetPlanetId, double gameAge);
+
     // Per-force target sizes for production (fighters + vehicles/capitals).
     static int targetFighters() { return 8; }
     static int targetHeavies() { return 2; }

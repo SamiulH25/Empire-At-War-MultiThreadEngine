@@ -190,6 +190,23 @@ void Simulation::tick(double dt) {
     for (const auto& p : sim().allPlayers()) {
         if (!p.human) ai_->runStep(sim(), p.id, time_, aiEquation_);
     }
+    // Multi-stage plans: every non-human force with a configured target
+    // planet advances its stage machine.
+    if (!aiPlanTarget_.empty()) {
+        const Planet* target = sim().findPlanet(aiPlanTarget_);
+        if (target) {
+            for (const TaskForce& f : sim().forces()) {
+                const Player* owner = sim().player(f.playerId);
+                if (owner && owner->human) continue;
+                ai_->runPlan(sim(), f.id, target->id, time_);
+            }
+            unsigned long long done = 0;
+            for (const TaskForce& f : sim().forces()) {
+                if (f.planResult) ++done;
+            }
+            completedPlans_ = done;
+        }
+    }
     stepEconomy(dt);
     stepGalactic(dt);
     sim().tickAbilities(dt);

@@ -21,6 +21,55 @@ const char* kDefaultAttackEquation = R"(
 
 } // namespace
 
+void AiDriver::runPlan(SimState& sim, int forceId, int targetPlanetId,
+                       double gameAge) {
+    TaskForce* f = sim.taskForce(forceId);
+    if (!f || f->planResult) return;
+    switch (f->stage) {
+        case 0: // assemble: wait for the roster to fill, then move out
+            if (f->units.size() >= static_cast<size_t>(targetFighters() +
+                                                       targetHeavies())) {
+                f->stage = 1;
+            }
+            break;
+        case 1: { // move: hyperspace to the target planet
+            const Planet* target = sim.planet(targetPlanetId);
+            if (!target) { f->stage = 3; break; }
+            if (!sim.forceInTransit(forceId)) {
+                if (f->planetId != targetPlanetId) {
+                    sim.startTransit(forceId, targetPlanetId);
+                } else {
+                    f->stage = 2; // already there
+                }
+            } else if (sim.forcePlanet(forceId) == targetPlanetId) {
+                f->stage = 2; // arrived
+            }
+            break;
+        }
+        case 2: { // attack: find and engage enemies at/near the planet
+            TargetChoice t = targeting_.findTarget(sim, *f, "Attack_Target",
+                                                   gameAge);
+            if (t.found) {
+                for (int uid : f->units) {
+                    GameObject* o = sim.object(uid);
+                    if (o && o->alive) o->attackTargetId = t.objectId;
+                }
+            }
+            // Retreat when the force is spent or the enemy is gone.
+            int alive = 0;
+            for (int uid : f->units) {
+                const GameObject* o = sim.object(uid);
+                if (o && o->alive) ++alive;
+            }
+            if (alive == 0 || !t.found) f->stage = 3;
+            break;
+        }
+        case 3: // done
+            f->planResult = true;
+            break;
+    }
+}
+
 void AiDriver::produce(SimState& sim, int playerId,
                        const std::vector<std::string>& buildTypes) {
     if (buildTypes.empty()) return;
@@ -45,6 +94,16 @@ void AiDriver::produce(SimState& sim, int playerId,
         // Try to build the missing class, preferring the first affordable
         // type in the preference list that fits the gap.
         bool needHeavy = heavies < targetHeavies();
+        // If no heavy type is buildable at all, fall back to fighters.
+        bool anyHeavyAvailable = false;
+        for (const std::string& tn : buildTypes) {
+            const ObjectType* t = sim.type(tn);
+            if (t && t->buildCost >= 500.0 && sim.canBuild(playerId, tn)) {
+                anyHeavyAvailable = true;
+                break;
+            }
+        }
+        if (needHeavy && !anyHeavyAvailable) needHeavy = false;
         for (const std::string& tn : buildTypes) {
             const ObjectType* t = sim.type(tn);
             if (!t || !sim.canBuild(playerId, tn)) continue;

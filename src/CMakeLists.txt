@@ -187,6 +187,12 @@ add_executable(fog_tests
 target_link_libraries(fog_tests PRIVATE eaw_core)
 add_test(NAME fog_tests COMMAND fog_tests)
 
+add_executable(ai_plan_tests
+    tests/test_ai_plans.cpp
+)
+target_link_libraries(ai_plan_tests PRIVATE eaw_core)
+add_test(NAME ai_plan_tests COMMAND ai_plan_tests)
+
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test
     tests/test_real_lua.cpp

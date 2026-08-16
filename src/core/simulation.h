@@ -64,6 +64,15 @@ public:
         aiBuildTypes_ = types;
     }
 
+    // Sets the target planet (by name) the AI's attack taskforces plan
+    // against: assemble -> move -> attack -> done. Empty = no plan driver.
+    void setAiPlanTarget(const std::string& planetName) {
+        aiPlanTarget_ = planetName;
+    }
+
+    // Number of AI plans that completed (Set_Plan_Result) — for telemetry.
+    unsigned long long completedPlans() const { return completedPlans_; }
+
     // Number of hyperspace arrivals completed (for tests/telemetry).
     unsigned long long transitArrivals() const { return transitArrivals_; }
 
@@ -111,6 +120,8 @@ private:
     std::unique_ptr<AiDriver> ai_;
     std::string aiEquation_;
     std::vector<std::string> aiBuildTypes_;
+    std::string aiPlanTarget_;
+    unsigned long long completedPlans_ = 0;
 };
 
 } // namespace eaw
