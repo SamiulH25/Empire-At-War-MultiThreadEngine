@@ -259,6 +259,38 @@ thread is the confirmed background thread. The main loop (Task 1.4) is otherwise
 single-threaded; the packet handler / manager cluster uses mutexes to protect its own
 state (Task 1.5), not extra threads.
 
+## Perception Interop Map
+
+`Init_Perception_DLL` is imported from PerceptionFunctionG.dll (10 imports) and called
+from **`FUN_1404753b0`** (the perception system init). The call passes the engine's
+callback surface + shared objects:
+
+| Arg | Value | Purpose (from decompile) | Safety |
+|---|---|---|---|
+| 1 | `DAT_140b310a8` | `DynamicEnumConversionClass<PerceptionTokenType>*` (token enum conversion) | read-only |
+| 2 | `FUN_1405b41c0` | **Token-matcher**: reads obj at param+0x40, calls `FUN_1404dd350` (matches perception token type), returns ulonglong | THREAD_SAFE (pure-ish, reads only) |
+| 3 | `&LAB_1404dd340` | (label thunk) bool callback — token compare | TBD |
+| 4 | `&LAB_1404e0160` | (label thunk) void callback | TBD |
+| 5 | `&LAB_1405f1150` | float math fn (fn(float,float)->float — the `_func_float_float_float` cast) | THREAD_SAFE (pure math) |
+| 6 | `0x0` | null — allocator slot unused | — |
+| 7 | `FUN_1404748d0` | **String-lookup** (bool): string hash/lookup via `FUN_14004fc30` singleton + string ops | THREAD_SAFE (read-only lookup) |
+| 8 | `FUN_140474990` | void callback: string-based registry (same singleton + string ops) | read-only |
+| 9 | `&LAB_140474c40` | (label thunk) `_func_bool_PerceptionTokenType_double` — evaluation-state callback | TBD |
+| 10 | `&LAB_140474ac0` | (label thunk) bool callback | TBD |
+| 11 | `FUN_140474be0` | void callback: registers object (operates on param+8) | write-ish (registration) |
+| 12 | `DAT_140a7d080` | `MegaFileManagerClass*` (same as the init's `DAT_140a7d080` — megafile access) | shared |
+| 13 | `DAT_140b31150` | bool flag | — |
+| 14 | `&PTR_vftable_140a14cc0` | `DynamicVectorClass<basic_string>*` (vector of strings) | shared |
+
+**Verdict: Perception evaluation is parallelizable as-is — PARTIALLY.** The pure math
+callback (#5) and the read-only string lookup (#7/#8) are thread-safe. The token-matcher
+(#2) reads shared state without an obvious lock. The label thunks (#3/#4/#9/#10) need
+function creation + decompile to fully classify, and the megafile pointer (#12) is shared
+but megafile reads are typically read-only after load. No mutex acquisition was observed
+in the decompiled callbacks — consistent with the engine being single-threaded, so
+**adding worker threads for perception evaluation would need a read-only/shared contract
+or a lock on the megafile/registry access**.
+
 ## Next Steps
 
 1. Full disassembly of `corruption/StarWarsG.exe`
