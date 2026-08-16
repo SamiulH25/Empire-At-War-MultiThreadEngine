@@ -695,6 +695,17 @@ int objEjectGarrison(lua_State* s) {
 
 // ---- global spawn ---------------------------------------------------------
 
+int createPosition(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    double x = luaL_checknumber(s, 1);
+    double y = luaL_checknumber(s, 2);
+    double z = luaL_checknumber(s, 3);
+    pushWrapper(s, sim, WrapperKind::Position, 0);
+    Wrapper* pw = static_cast<Wrapper*>(lua_touserdata(s, -1));
+    pw->pos = Vec3{x, y, z};
+    return 1;
+}
+
 int spawnUnit(lua_State* s) {
     SimState* sim = simFromUpvalue(s, 1);
     // arg 1: type wrapper or type name; arg 2: position wrapper or object;
@@ -965,6 +976,9 @@ void registerObjectBindings(LuaHost& lua, SimState& sim) {
     lua_setglobal(s, "Find_Nearest");
 
     // Spawning.
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, createPosition, 1);
+    lua_setglobal(s, "Create_Position");
     lua_pushlightuserdata(s, &sim);
     lua_pushcclosure(s, spawnUnit, 1);
     lua_setglobal(s, "Spawn_Unit");

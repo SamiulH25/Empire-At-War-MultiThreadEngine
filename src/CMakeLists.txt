@@ -28,6 +28,7 @@ add_library(eaw_core STATIC
     core/pg_bindings.cpp
     core/pg_object_bindings.cpp
     core/script_manager.cpp
+    core/simulation.cpp
 )
 target_include_directories(eaw_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(eaw_core PUBLIC cxx_std_20)
@@ -93,6 +94,12 @@ add_executable(object_bindings_tests
 )
 target_link_libraries(object_bindings_tests PRIVATE eaw_core)
 add_test(NAME object_bindings_tests COMMAND object_bindings_tests)
+
+add_executable(simulation_tests
+    tests/test_simulation.cpp
+)
+target_link_libraries(simulation_tests PRIVATE eaw_core)
+add_test(NAME simulation_tests COMMAND simulation_tests)
 
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test
