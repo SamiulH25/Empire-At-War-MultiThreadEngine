@@ -203,10 +203,11 @@ void testUnitNavigatesAroundObstacle() {
     sim.sim().addType(std::move(xwing));
     int unitId = sim.sim().spawnUnit("X_WING", rebel.id, {5, 10, 0});
 
-    // Wall along world x=60 from y=0 to y=40 (grid cellSize=2).
+    // Wall along world x=60 from y=0 to y=40, all altitude bands.
     eaw::PathGrid& g = sim.pathGrid();
     int wallX = g.cellOf(60.0);
-    for (int y = 0; y <= 20; ++y) g.setBlocked(wallX, y);
+    for (int y = 0; y <= 20; ++y)
+        for (int z = 0; z < g.depth(); ++z) g.setBlocked(wallX, y, z);
 
     // Order the unit to move across the wall.
     eaw::GameObject* unit = sim.sim().object(unitId);

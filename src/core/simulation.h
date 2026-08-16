@@ -57,7 +57,8 @@ private:
     MegaFileManager files_;
     ScriptManager scripts_;
     JobSystem jobs_;
-    PathGrid grid_{256, 256, 2.0};
+    // 3D routing grid: 256x256x64 altitude bands at 2-unit cells.
+    PathGrid grid_{256, 256, 64, 2.0};
     PathfindingSystem pathfinding_;
     double time_ = 0.0;
     unsigned long long updateTicks_ = 0;

@@ -10,35 +10,38 @@ namespace {
 
 // Per-object movement integration. Reads only the object's own state and
 // writes only its own position — safe to run on any worker for disjoint
-// object sets (design doc 06: read-shared, write-partitioned).
+// object sets (design doc 06: read-shared, write-partitioned). Movement is
+// full 3D: waypoint paths carry altitude, and the direct-move case
+// interpolates all three axes.
 void integrateObject(GameObject& o, double dt) {
     if (!o.alive || !o.hasMoveTarget) return;
     // If the unit has a computed path, walk it waypoint by waypoint.
     if (o.pathIndex < o.path.size()) {
         Vec3 target = o.path[o.pathIndex];
-        Vec3 d{target.x - o.position.x, target.y - o.position.y, 0.0};
-        double dist = std::sqrt(d.x * d.x + d.y * d.y);
+        Vec3 d{target.x - o.position.x,
+               target.y - o.position.y,
+               target.z - o.position.z};
+        double dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
         double step = o.moveSpeed * dt;
         if (dist <= step) {
-            o.position.x = target.x;
-            o.position.y = target.y;
+            o.position = target;
             ++o.pathIndex;
             if (o.pathIndex >= o.path.size()) {
-                // Path done: arrive at the final move target.
+                // Path done: arrive at the final move target (all axes).
                 o.path.clear();
                 o.pathIndex = 0;
-                o.position.x = o.moveTarget.x;
-                o.position.y = o.moveTarget.y;
+                o.position = o.moveTarget;
                 o.hasMoveTarget = false;
             }
         } else {
             double k = step / dist;
             o.position.x += d.x * k;
             o.position.y += d.y * k;
+            o.position.z += d.z * k;
         }
         return;
     }
-    // No path — direct move.
+    // No path — direct move (full 3D).
     Vec3 d{o.moveTarget.x - o.position.x,
            o.moveTarget.y - o.position.y,
            o.moveTarget.z - o.position.z};
@@ -142,9 +145,10 @@ void Simulation::stepPathfinding() {
     std::vector<int> toRequest;
     for (const GameObject* o : sim().allObjects()) {
         if (!o->alive || !o->hasMoveTarget) continue;
-        if (!o->path.empty()) continue; // already following a path
-        if (grid_.lineBlocked(o->position.x, o->position.y,
-                              o->moveTarget.x, o->moveTarget.y)) {
+        if (!o->path.empty()) continue;        // already following a path
+        if (o->pathSearchId != 0) continue;    // search already in flight
+        if (grid_.lineBlocked(o->position.x, o->position.y, o->position.z,
+                              o->moveTarget.x, o->moveTarget.y, o->moveTarget.z)) {
             toRequest.push_back(o->id);
         }
     }
@@ -171,6 +175,16 @@ void Simulation::stepPathfinding() {
             }
         }
     });
+    // Failed searches (no path found) release their unit so it doesn't
+    // beeline through obstacles forever: cancel the move order.
+    for (const GameObject* o : sim().allObjects()) {
+        GameObject* g = sim().object(o->id);
+        if (!g || g->pathSearchId == 0) continue;
+        if (pathfinding_.isFailed(g->pathSearchId)) {
+            g->hasMoveTarget = false;
+            g->pathSearchId = 0;
+        }
+    }
 }
 
 void Simulation::runCombat(double dt) {

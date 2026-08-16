@@ -9,18 +9,23 @@ namespace eaw {
 namespace {
 
 constexpr int kCardinalCost = 100;
+constexpr int kDiagonalCost = 141; // ~sqrt(2)*100, unused with 6-connected
 
-inline int idxOf(const PathGrid& g, int x, int y) {
-    return y * g.width() + x;
-}
-
-inline int manhattan(int ax, int ay, int bx, int by) {
-    return (std::abs(ax - bx) + std::abs(ay - by)) * kCardinalCost;
+inline int manhattan3d(int ax, int ay, int az, int bx, int by, int bz) {
+    return (std::abs(ax - bx) + std::abs(ay - by) + std::abs(az - bz)) *
+           kCardinalCost;
 }
 
 } // namespace
 
-// --- heap (per-search) ---------------------------------------------------
+// --- per-search heap -----------------------------------------------------
+
+uint64_t PathfindingSystem::pack(int x, int y, int z) {
+    // Cells are bounded by grid dims (small ints); 21 bits each is ample.
+    return (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 42) |
+           (static_cast<uint64_t>(static_cast<uint32_t>(y)) << 21) |
+           static_cast<uint64_t>(static_cast<uint32_t>(z));
+}
 
 void PathfindingSystem::heapPush(Search& s, int nodeIdx, int f) {
     s.open.push_back(HeapEntry{nodeIdx, f});
@@ -53,13 +58,11 @@ int PathfindingSystem::heapPop(Search& s) {
         HeapEntry top = s.open[0];
         Node& n = s.nodes[top.node];
         if (top.f == n.f && !n.closed) {
-            // Remove the top.
             s.open[0] = s.open.back();
             s.open.pop_back();
             heapSiftDown(s, 0);
             return top.node;
         }
-        // Stale entry — discard and re-heapify.
         s.open[0] = s.open.back();
         s.open.pop_back();
         heapSiftDown(s, 0);
@@ -78,24 +81,31 @@ int PathfindingSystem::request(const Vec3& start, const Vec3& goal) {
     s->id = nextId_++;
     s->startX = grid_.cellOf(start.x);
     s->startY = grid_.cellOf(start.y);
+    s->startZ = grid_.cellOf(start.z);
     s->goalX = grid_.cellOf(goal.x);
     s->goalY = grid_.cellOf(goal.y);
-    s->nodes.assign(static_cast<size_t>(grid_.width()) * grid_.height(), Node{});
+    s->goalZ = grid_.cellOf(goal.z);
+    s->nodeIndex.reserve(1024);
+    s->nodes.reserve(1024);
 
-    if (s->startX == s->goalX && s->startY == s->goalY) {
+    if (s->startX == s->goalX && s->startY == s->goalY && s->startZ == s->goalZ) {
         s->path = {Vec3{start.x, start.y, start.z}, Vec3{goal.x, goal.y, goal.z}};
         s->done = true;
-    } else if (grid_.blocked(s->startX, s->startY) || grid_.blocked(s->goalX, s->goalY)) {
+    } else if (grid_.blocked(s->startX, s->startY, s->startZ) ||
+               grid_.blocked(s->goalX, s->goalY, s->goalZ)) {
         s->failed = true;
     } else {
-        int si = idxOf(grid_, s->startX, s->startY);
-        Node& startNode = s->nodes[si];
+        Node startNode;
         startNode.x = s->startX;
         startNode.y = s->startY;
+        startNode.z = s->startZ;
         startNode.g = 0;
-        startNode.f = manhattan(s->startX, s->startY, s->goalX, s->goalY);
+        startNode.f = manhattan3d(s->startX, s->startY, s->startZ,
+                                  s->goalX, s->goalY, s->goalZ);
         startNode.parent = -1;
-        heapPush(*s, si, startNode.f);
+        s->nodeIndex[pack(s->startX, s->startY, s->startZ)] = 0;
+        s->nodes.push_back(startNode);
+        heapPush(*s, 0, startNode.f);
     }
     int id = s->id;
     searches_.push_back(std::move(s));
@@ -114,50 +124,70 @@ bool PathfindingSystem::stepSearch(Search& s, int budget) {
         c.closed = true;
         ++steps;
         ++s.expansions;
-        if (c.x == s.goalX && c.y == s.goalY) {
-            // Reconstruct via parent chain.
+        // Snapshot before expanding: pushing new nodes may reallocate
+        // s.nodes and invalidate `c`.
+        const int cx = c.x, cy = c.y, cz = c.z, cg = c.g;
+        if (cx == s.goalX && cy == s.goalY && cz == s.goalZ) {
+            // Reconstruct via parent chain (start -> goal).
             std::vector<Vec3> raw;
             for (int n = cur; n >= 0; n = s.nodes[n].parent) {
                 raw.push_back(Vec3{grid_.worldOf(s.nodes[n].x),
-                                   grid_.worldOf(s.nodes[n].y), 0.0});
+                                   grid_.worldOf(s.nodes[n].y),
+                                   grid_.worldOf(s.nodes[n].z)});
             }
             std::reverse(raw.begin(), raw.end());
-            // Line-of-sight shortcut: drop intermediate waypoints reachable
-            // in a straight line from the last kept one.
+            // Line-of-sight shortcut (3D): drop intermediate waypoints the
+            // unit can reach in a straight line.
             std::vector<Vec3> out;
             out.push_back(raw.front());
             for (size_t i = 1; i < raw.size(); ++i) {
-                if (grid_.lineBlocked(out.back().x, out.back().y,
-                                      raw[i].x, raw[i].y)) {
+                if (grid_.lineBlocked(out.back().x, out.back().y, out.back().z,
+                                      raw[i].x, raw[i].y, raw[i].z)) {
                     out.push_back(raw[i - 1]);
                 }
             }
-            if (out.back().x != raw.back().x || out.back().y != raw.back().y) {
+            if (out.back().x != raw.back().x || out.back().y != raw.back().y ||
+                out.back().z != raw.back().z) {
                 out.push_back(raw.back());
             }
             s.path = std::move(out);
             s.done = true;
             return true;
         }
-        // Expand 4 neighbors.
-        static const int dx[4] = {1, -1, 0, 0};
-        static const int dy[4] = {0, 0, 1, -1};
-        for (int d = 0; d < 4; ++d) {
-            int nx = c.x + dx[d], ny = c.y + dy[d];
-            if (grid_.blocked(nx, ny)) continue;
-            int ni = idxOf(grid_, nx, ny);
-            Node& n = s.nodes[ni];
-            if (n.closed) continue;
-            int tentative = c.g + kCardinalCost;
-            if (tentative < n.g) {
-                if (n.g == 0x7fffffff) {
-                    n.x = nx;
-                    n.y = ny;
-                }
-                n.g = tentative;
-                n.f = tentative + manhattan(nx, ny, s.goalX, s.goalY);
+        // Expand 6 neighbors (cardinal on each axis).
+        static const int dx[6] = {1, -1, 0, 0, 0, 0};
+        static const int dy[6] = {0, 0, 1, -1, 0, 0};
+        static const int dz[6] = {0, 0, 0, 0, 1, -1};
+        for (int d = 0; d < 6; ++d) {
+            int nx = cx + dx[d], ny = cy + dy[d], nz = cz + dz[d];
+            if (grid_.blocked(nx, ny, nz)) continue;
+            // z-moves cost extra so routing prefers staying on a plane.
+            int moveCost = (dz[d] != 0) ? opt_.zStepCost : kCardinalCost;
+            uint64_t key = pack(nx, ny, nz);
+            auto it = s.nodeIndex.find(key);
+            int ni;
+            if (it == s.nodeIndex.end()) {
+                Node n;
+                n.x = nx; n.y = ny; n.z = nz;
+                n.g = cg + moveCost;
+                n.f = n.g + manhattan3d(nx, ny, nz, s.goalX, s.goalY, s.goalZ);
                 n.parent = cur;
+                ni = static_cast<int>(s.nodes.size());
+                s.nodeIndex[key] = ni;
+                s.nodes.push_back(n);
                 heapPush(s, ni, n.f);
+            } else {
+                ni = it->second;
+                Node& n = s.nodes[ni];
+                if (n.closed) continue;
+                int tentative = cg + moveCost;
+                if (tentative < n.g) {
+                    n.g = tentative;
+                    n.f = tentative + manhattan3d(nx, ny, nz,
+                                                  s.goalX, s.goalY, s.goalZ);
+                    n.parent = cur;
+                    heapPush(s, ni, n.f);
+                }
             }
         }
     }
