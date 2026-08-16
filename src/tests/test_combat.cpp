@@ -176,6 +176,28 @@ void testCombatDeterminism() {
     check(a.totalShots() == b.totalShots(), "shot counts identical across worker counts");
 }
 
+void testAlliedTargetsNotFiredOn() {
+    CombatFixture fx(0.1);
+    // Make the two players allies; the attack order must be ignored.
+    fx.sim->sim().makeAlly(fx.rebelId, fx.empireId);
+    fx.sim->scripts().runScript(
+        "Find_First_Object('X_WING'):Attack_Target(Find_First_Object('ISD'))\n");
+    fx.sim->tick(1.0 / 30.0);
+    check(fx.sim->totalShots() == 0, "no fire against allied player");
+}
+
+void testAllianceBrokenRestoresFire() {
+    CombatFixture fx(0.1);
+    fx.sim->sim().makeAlly(fx.rebelId, fx.empireId);
+    fx.sim->scripts().runScript(
+        "Find_First_Object('X_WING'):Attack_Target(Find_First_Object('ISD'))\n");
+    fx.sim->tick(1.0 / 30.0);
+    check(fx.sim->totalShots() == 0, "no fire while allied");
+    fx.sim->sim().makeEnemy(fx.rebelId, fx.empireId);
+    fx.sim->tick(1.0 / 30.0);
+    check(fx.sim->totalShots() == 1, "fire resumes after alliance broken");
+}
+
 } // namespace
 
 int main() {
@@ -188,6 +210,8 @@ int main() {
     testCombatKillsTarget();
     testCombatTriggersDeathEvent();
     testCombatDeterminism();
+    testAlliedTargetsNotFiredOn();
+    testAllianceBrokenRestoresFire();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;

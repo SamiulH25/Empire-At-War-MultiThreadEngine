@@ -62,6 +62,10 @@ struct Player {
     bool human = false;
     int techLevel = 0;
     double credits = 0;
+    // Diplomatic relations (Make_Ally / Make_Enemy). Defaults:
+    //  - a player is an ally of itself
+    //  - all other players are enemies until allied
+    std::vector<int> allies;
 };
 
 // A live game object (unit, structure, planet, projectile).
@@ -99,7 +103,20 @@ public:
     // --- players ---
     Player& addPlayer(const std::string& name, const std::string& faction);
     const Player* player(int id) const;
+    Player* player(int id);
     const Player* findPlayer(const std::string& name) const; // by display or faction name
+    // All players (for iteration; references valid — deque storage).
+    const std::deque<Player>& allPlayers() const { return players_; }
+
+    // --- diplomacy ---
+    // Makes `a` and `b` allies (symmetric; each stays allied to itself).
+    void makeAlly(int a, int b);
+    // Breaks the alliance between `a` and `b` (they become enemies).
+    void makeEnemy(int a, int b);
+    // True if `a` considers `b` an ally (including self).
+    bool isAlly(int a, int b) const;
+    // True if `a` considers `b` an enemy (any non-ally other than self).
+    bool isEnemy(int a, int b) const;
 
     // --- types ---
     ObjectType& addType(ObjectType t);

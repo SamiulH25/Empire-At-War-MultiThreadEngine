@@ -407,6 +407,79 @@ void testReinforceUnit() {
     lua_pop(fx.lua.state(), 1);
 }
 
+void testDiplomacy() {
+    Fixture fx;
+    fx.lua.runScript(
+        "rebel = Find_Player('REBEL')\n"
+        "empire = Find_Player('EMPIRE')\n"
+        "self_ally = rebel:Is_Ally(rebel)\n"
+        "default_enemy = rebel:Is_Enemy(empire)\n"
+        "default_ally = rebel:Is_Ally(empire)\n"
+        "enemy = rebel:Get_Enemy()\n"
+        "enemy_name = enemy:Get_Name()\n");
+    lua_getglobal(fx.lua.state(), "self_ally");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "player is ally of itself");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "default_enemy");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "players are enemies by default");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "default_ally");
+    check(lua_toboolean(fx.lua.state(), -1) == 0, "players not allies by default");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "enemy_name");
+    check(std::string(lua_tostring(fx.lua.state(), -1)) == "Galactic Empire",
+          "Get_Enemy returns an enemy player");
+    lua_pop(fx.lua.state(), 1);
+    // Make them allies.
+    fx.lua.runScript(
+        "rebel:Make_Ally(empire)\n"
+        "a = rebel:Is_Ally(empire)\n"
+        "b = empire:Is_Ally(rebel)\n"
+        "e = rebel:Is_Enemy(empire)\n");
+    lua_getglobal(fx.lua.state(), "a");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "Make_Ally: rebel sees empire as ally");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "b");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "Make_Ally is symmetric");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "e");
+    check(lua_toboolean(fx.lua.state(), -1) == 0, "allies are not enemies");
+    lua_pop(fx.lua.state(), 1);
+    // Break it.
+    fx.lua.runScript(
+        "rebel:Make_Enemy(empire)\n"
+        "e = rebel:Is_Enemy(empire)\n");
+    lua_getglobal(fx.lua.state(), "e");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "Make_Enemy restores hostility");
+    lua_pop(fx.lua.state(), 1);
+}
+
+void testThreeWayDiplomacy() {
+    // A third player: rebel allies with empire; a neutral third stays enemy.
+    Fixture fx;
+    fx.lua.runScript(
+        "p3 = Find_Player('REBEL')\n"); // placeholder; third player added in C++
+    eaw::Player& third = fx.sim.addPlayer("Hutt Cartel", "HUTT");
+    fx.lua.runScript(
+        "rebel = Find_Player('REBEL')\n"
+        "empire = Find_Player('EMPIRE')\n"
+        "hutt = Find_Player('HUTT')\n"
+        "rebel:Make_Ally(empire)\n"
+        "a = rebel:Is_Ally(empire)\n"
+        "h = rebel:Is_Enemy(hutt)\n"
+        "h2 = empire:Is_Enemy(hutt)\n");
+    lua_getglobal(fx.lua.state(), "a");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "allied pair is friendly");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "h");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "unallied third is enemy of rebel");
+    lua_pop(fx.lua.state(), 1);
+    lua_getglobal(fx.lua.state(), "h2");
+    check(lua_toboolean(fx.lua.state(), -1) == 1, "unallied third is enemy of empire");
+    lua_pop(fx.lua.state(), 1);
+    (void)third;
+}
+
 } // namespace
 
 int main() {
@@ -429,6 +502,8 @@ int main() {
     testGarrison();
     testLockOrdersAndInvulnerable();
     testReinforceUnit();
+    testDiplomacy();
+    testThreeWayDiplomacy();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;

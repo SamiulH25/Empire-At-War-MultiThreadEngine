@@ -361,6 +361,60 @@ int playerGetCredits(lua_State* s) {
     return 1;
 }
 
+// ---- diplomacy (player methods) ------------------------------------------
+
+int playerMakeAlly(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    Wrapper* other = checkWrapper(s, 2);
+    if (other->kind != WrapperKind::Player) {
+        return luaL_error(s, "Make_Ally: expected player");
+    }
+    w->sim->makeAlly(w->id, other->id);
+    return 0;
+}
+
+int playerMakeEnemy(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    Wrapper* other = checkWrapper(s, 2);
+    if (other->kind != WrapperKind::Player) {
+        return luaL_error(s, "Make_Enemy: expected player");
+    }
+    w->sim->makeEnemy(w->id, other->id);
+    return 0;
+}
+
+int playerIsAlly(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    Wrapper* other = checkWrapper(s, 2);
+    lua_pushboolean(s, other->kind == WrapperKind::Player &&
+                          w->sim->isAlly(w->id, other->id));
+    return 1;
+}
+
+int playerIsEnemy(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    Wrapper* other = checkWrapper(s, 2);
+    lua_pushboolean(s, other->kind == WrapperKind::Player &&
+                          w->sim->isEnemy(w->id, other->id));
+    return 1;
+}
+
+int playerGetEnemy(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const Player* p = w->sim->player(w->id);
+    if (!p) { lua_pushnil(s); return 1; }
+    // First player that is an enemy of this one (documented as "an enemy
+    // player"; typically the opposing faction).
+    for (const auto& other : w->sim->allPlayers()) {
+        if (other.id != w->id && w->sim->isEnemy(w->id, other.id)) {
+            pushWrapper(s, w->sim, WrapperKind::Player, other.id);
+            return 1;
+        }
+    }
+    lua_pushnil(s);
+    return 1;
+}
+
 // ---- wrapper methods (type) ---------------------------------------------
 
 // Pushes the type name for a Type wrapper's id onto the stack. Returns the
@@ -780,6 +834,11 @@ const MethodEntry kPlayerMethods[] = {
     {"Is_Human", playerIsHuman},
     {"Get_Tech_Level", playerGetTechLevel},
     {"Get_Credits", playerGetCredits},
+    {"Make_Ally", playerMakeAlly},
+    {"Make_Enemy", playerMakeEnemy},
+    {"Is_Ally", playerIsAlly},
+    {"Is_Enemy", playerIsEnemy},
+    {"Get_Enemy", playerGetEnemy},
 };
 
 const MethodEntry kTypeMethods[] = {

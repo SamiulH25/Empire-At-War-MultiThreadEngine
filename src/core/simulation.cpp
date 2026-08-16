@@ -77,7 +77,9 @@ void decideShot(const SimState& sim, const std::vector<int>& ids, int64_t i,
     if (!t || t->damage <= 0 || o->attackCooldown > 0.0) return;
     // Find the attack target (may be set by script or auto-acquired).
     const GameObject* target = o->attackTargetId ? sim.object(o->attackTargetId) : nullptr;
-    if (!target || !target->alive || target->playerId == o->playerId) return;
+    if (!target || !target->alive) return;
+    // No friendly fire: allies (and self) are not valid targets.
+    if (sim.isAlly(o->playerId, target->playerId)) return;
     double dist = o->position.distanceTo(target->position);
     if (dist > t->maxRange) return;
     // Fire.

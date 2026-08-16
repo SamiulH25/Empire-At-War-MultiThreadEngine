@@ -22,11 +22,52 @@ const Player* SimState::player(int id) const {
     return nullptr;
 }
 
+Player* SimState::player(int id) {
+    for (auto& p : players_) {
+        if (p.id == id) return &p;
+    }
+    return nullptr;
+}
+
 const Player* SimState::findPlayer(const std::string& name) const {
     for (const auto& p : players_) {
         if (p.name == name || p.factionName == name) return &p;
     }
     return nullptr;
+}
+
+// --- diplomacy ------------------------------------------------------------
+
+void SimState::makeAlly(int a, int b) {
+    if (a == b) return;
+    auto addAlly = [](Player& p, int other) {
+        if (std::find(p.allies.begin(), p.allies.end(), other) == p.allies.end()) {
+            p.allies.push_back(other);
+        }
+    };
+    if (Player* pa = player(a)) addAlly(*pa, b);
+    if (Player* pb = player(b)) addAlly(*pb, a);
+}
+
+void SimState::makeEnemy(int a, int b) {
+    if (a == b) return;
+    auto removeAlly = [](Player& p, int other) {
+        p.allies.erase(std::remove(p.allies.begin(), p.allies.end(), other),
+                       p.allies.end());
+    };
+    if (Player* pa = player(a)) removeAlly(*pa, b);
+    if (Player* pb = player(b)) removeAlly(*pb, a);
+}
+
+bool SimState::isAlly(int a, int b) const {
+    if (a == b) return true;
+    const Player* pa = player(a);
+    if (!pa) return false;
+    return std::find(pa->allies.begin(), pa->allies.end(), b) != pa->allies.end();
+}
+
+bool SimState::isEnemy(int a, int b) const {
+    return a != b && !isAlly(a, b);
 }
 
 ObjectType& SimState::addType(ObjectType t) {
