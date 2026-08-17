@@ -39,6 +39,7 @@ add_library(eaw_core STATIC
     core/pg_fog_bindings.cpp
     core/script_manager.cpp
     core/simulation.cpp
+    core/parallel_tick.cpp
 )
 target_include_directories(eaw_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(eaw_core PUBLIC cxx_std_20)
@@ -72,7 +73,7 @@ add_library(patch_d3d9 SHARED
     proxy/d3d9.def
 )
 set_target_properties(patch_d3d9 PROPERTIES PREFIX "" OUTPUT_NAME "d3d9")
-target_link_libraries(patch_d3d9 PRIVATE minhook)
+target_link_libraries(patch_d3d9 PRIVATE minhook eaw_core)
 target_include_directories(patch_d3d9 PRIVATE ../third_party/minhook/include)
 # MinHook's x64 trampolines must not use the red zone.
 if(MINGW)
@@ -147,6 +148,12 @@ add_executable(job_system_tests
 )
 target_link_libraries(job_system_tests PRIVATE eaw_core)
 add_test(NAME job_system_tests COMMAND job_system_tests)
+
+add_executable(parallel_tick_tests
+    tests/test_parallel_tick.cpp
+)
+target_link_libraries(parallel_tick_tests PRIVATE eaw_core)
+add_test(NAME parallel_tick_tests COMMAND parallel_tick_tests)
 
 add_executable(lua_tests
     tests/test_lua.cpp

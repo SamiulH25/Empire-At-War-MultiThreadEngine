@@ -16,6 +16,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "core/job_system.h"
+#include "core/parallel_tick.h"
 #include "MinHook.h"
 
 namespace {
@@ -28,17 +30,74 @@ constexpr DWORD64 kTickOffset = 0x25ca30;
 using TickFn = void (*)(void* hwnd, float dt);
 TickFn g_originalTick = nullptr;
 
+// The engine's worker pool, attached once at init. ParallelTick uses it to
+// fan the per-object updates across the hardware.
+eaw::JobSystem* g_jobs = nullptr;
+
+// Six object-list structs {GameObj** ptr; int count;} live at these offsets
+// in the sim-tick context (the `hwnd` param). Confirmed from the Ghidra
+// decompile of FUN_14025ca30 (ghidra/simtick_decompile.txt): each list is
+// iterated as `items[i]` for i < count, calling vtable+0x50 on non-null.
+struct ListSlot {
+    eaw::GameObj** ptr; // offset +0x00
+    int count;          // offset +0x08
+};
+
+constexpr int kListOffsets[6] = {0x18, 0x30, 0x48, 0x60, 0x78, 0x90};
+
+// Reads and validates the game's live object lists from the tick context.
+// Every pointer and count is checked before registering, so a layout drift
+// (different build) degrades to "no lists" instead of a crash. IsBadReadPtr
+// is the portable (non-SEH) readable-check for pointers we must not touch.
+void ScanObjectLists(void* ctx) {
+    if (!ctx) return;
+    eaw::ObjectListCandidate cands[6];
+    int n = 0;
+    for (int i = 0; i < 6; ++i) {
+        ListSlot slot;
+        std::memcpy(&slot,
+                    reinterpret_cast<char*>(ctx) + kListOffsets[i],
+                    sizeof(slot));
+        if (!slot.ptr || slot.count <= 0 || slot.count > (1 << 22)) continue;
+        // Validate the items array is readable (probe first and last).
+        if (IsBadReadPtr(slot.ptr,
+                         static_cast<SIZE_T>(slot.count) * sizeof(void*))) {
+            continue;
+        }
+        cands[n].items = slot.ptr;
+        cands[n].count = slot.count;
+        cands[n].tag = i;
+        ++n;
+    }
+    int kept = eaw::RegisterObjectLists(cands, n);
+    if (getenv("EAW_PATCH_DEBUG")) {
+        printf("[hook] scanned %d lists, kept %d\n", n, kept);
+    }
+}
+
 // Called once per frame by the game loop (before the real sim tick).
 void HookedTick(void* hwnd, float dt) {
+    // First call: discover the game's live object lists from the tick
+    // context. Afterwards, ParallelTick fans them across the engine's
+    // workers. Additive — the real tick still runs below.
+    static bool scanned = false;
+    if (!scanned) {
+        ScanObjectLists(hwnd);
+        scanned = true;
+    }
+    eaw::ParallelTick(dt);
+
     // Proof-of-life + telemetry: log the first few ticks.
     static unsigned long long count = 0;
     if (count < 5 || (count % 1000) == 0) {
         if (getenv("EAW_PATCH_DEBUG")) {
-            printf("[hook] tick %llu dt=%.4f\n", count, (double)dt);
+            printf("[hook] tick %llu dt=%.4f objs=%lld\n", count, (double)dt,
+                   (long long)eaw::LastParallelObjectCount());
         }
         FILE* f = fopen("eaw_patch_hits.txt", "a");
         if (f) {
-            fprintf(f, "tick %llu dt=%.4f\n", count, (double)dt);
+            fprintf(f, "tick %llu dt=%.4f objs=%lld\n", count, (double)dt,
+                    (long long)eaw::LastParallelObjectCount());
             fclose(f);
         }
     }
@@ -72,9 +131,15 @@ void InstallTickHook() {
         return;
     }
     if (MH_EnableHook(target) != MH_OK) return;
+    // Attach the engine's worker pool to the parallel tick dispatcher.
+    if (!g_jobs) {
+        g_jobs = new eaw::JobSystem();
+        eaw::AttachJobSystem(g_jobs);
+    }
     FILE* f = fopen("eaw_patch_hits.txt", "w");
     if (f) {
         fprintf(f, "hook installed at %p\n", target);
+        fprintf(f, "workers: %u\n", g_jobs->workerCount());
         fclose(f);
     }
 }
