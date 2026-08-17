@@ -139,6 +139,13 @@ struct GameObject {
     std::vector<int> garrisonedUnits; // ids of units inside
 };
 
+// A formation: a leader object plus member ids that follow it (the game's
+// Set_Formation / Formation_Attack / Formation_Move surface).
+struct Formation {
+    int leaderId = 0;
+    std::vector<int> members;  // object ids (the leader is not a member)
+};
+
 // A planet in galactic mode.
 struct Planet {
     int id = 0;
@@ -314,6 +321,18 @@ public:
     // Fraction of the trip completed (0..1); 0 if not in transit.
     double forceTransitProgress(int forceId) const;
 
+    // --- formations ---
+    // Sets (or replaces) the formation led by `leaderId` with `memberIds`
+    // (the leader's id is never added). Returns false if the leader is
+    // unknown.
+    bool setFormation(int leaderId, const std::vector<int>& memberIds);
+    // The formation led by `leaderId` (null if none).
+    const Formation* formation(int leaderId) const;
+    // All formations (for the per-tick follow step).
+    const std::deque<Formation>& formations() const { return formations_; }
+    // Removes the formation led by `leaderId` (e.g. leader death).
+    void removeFormation(int leaderId);
+
     int nextObjectId() const { return nextObjectId_; }
 
 private:
@@ -322,6 +341,8 @@ private:
     std::deque<Player> players_;
     std::deque<TaskForce> forces_;
     std::deque<Planet> planets_;
+    std::deque<Formation> formations_;
+    std::unordered_map<int, int> formationLeaders_; // leaderId -> formations_ index
     std::unordered_map<std::string, ObjectType> types_;
     std::unordered_map<int, GameObject> objects_;
     int nextObjectId_ = 1;

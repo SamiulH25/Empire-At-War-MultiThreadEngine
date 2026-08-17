@@ -141,6 +141,31 @@ void applyDamage(const SimState& sim, GameObject* target,
     }
 }
 
+// Formation follow step: every member tracks its leader's position (the
+// game's squad behavior behind Set_Formation). Runs serially on the sim
+// thread (formations are small; the parallel movement update handles the
+// bulk). Dead leaders dissolve the formation.
+void stepFormations(eaw::SimState& sim) {
+    std::vector<int> deadLeaders;
+    for (const eaw::Formation& f : sim.formations()) {
+        const eaw::GameObject* leader = sim.object(f.leaderId);
+        if (!leader || !leader->alive) {
+            deadLeaders.push_back(f.leaderId);
+            continue;
+        }
+        for (int id : f.members) {
+            eaw::GameObject* m = sim.object(id);
+            if (!m || !m->alive) continue;
+            // Don't fight the leader's own movement: follow when the leader
+            // is moving, otherwise hold (the member's own orders win).
+            if (!leader->hasMoveTarget) continue;
+            m->hasMoveTarget = true;
+            m->moveTarget = leader->position;
+        }
+    }
+    for (int id : deadLeaders) sim.removeFormation(id);
+}
+
 } // namespace
 
 Simulation::Simulation(unsigned workerThreads)
@@ -216,6 +241,7 @@ void Simulation::tick(double dt) {
     }
     snapshotPositions();
     stepPathfinding();
+    stepFormations(sim());
     updateObjects(dt);
     runCombat(dt);
 }

@@ -1,10 +1,14 @@
 # Build artifacts
 build/
+build-mingw/
 dist/
 *.o
 *.obj
 *.dll
 *.exe
+
+# CTest output (generated inside build dirs)
+Testing/
 
 # Python
 __pycache__/

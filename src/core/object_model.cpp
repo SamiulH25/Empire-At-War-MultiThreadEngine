@@ -596,4 +596,49 @@ double SimState::forceTransitProgress(int forceId) const {
     return std::min(1.0, f->elapsedSeconds / f->travelSeconds);
 }
 
+// --- formations -----------------------------------------------------------
+
+bool SimState::setFormation(int leaderId, const std::vector<int>& memberIds) {
+    if (!object(leaderId)) return false;
+    auto it = formationLeaders_.find(leaderId);
+    Formation* f = nullptr;
+    if (it != formationLeaders_.end()) {
+        f = &formations_[it->second];
+        f->members.clear();
+    } else {
+        Formation nf;
+        nf.leaderId = leaderId;
+        formationLeaders_[leaderId] = static_cast<int>(formations_.size());
+        formations_.push_back(std::move(nf));
+        f = &formations_.back();
+    }
+    for (int id : memberIds) {
+        if (id == leaderId) continue;
+        if (object(id) && std::find(f->members.begin(), f->members.end(), id) ==
+                              f->members.end()) {
+            f->members.push_back(id);
+        }
+    }
+    return true;
+}
+
+const Formation* SimState::formation(int leaderId) const {
+    auto it = formationLeaders_.find(leaderId);
+    if (it == formationLeaders_.end()) return nullptr;
+    return &formations_[it->second];
+}
+
+void SimState::removeFormation(int leaderId) {
+    auto it = formationLeaders_.find(leaderId);
+    if (it == formationLeaders_.end()) return;
+    // Swap-remove keeps the deque dense; fix up the moved element's index.
+    size_t idx = static_cast<size_t>(it->second);
+    formations_[idx] = std::move(formations_.back());
+    formations_.pop_back();
+    if (idx < formations_.size()) {
+        formationLeaders_[formations_[idx].leaderId] = static_cast<int>(idx);
+    }
+    formationLeaders_.erase(leaderId);
+}
+
 } // namespace eaw

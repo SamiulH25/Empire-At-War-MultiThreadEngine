@@ -260,6 +260,118 @@ void testConfigureDefaultsUnchanged() {
           "default budget retained when unset");
 }
 
+// Serializes the sim's full object state (positions, hull, shield, cooldown,
+// orders, alive flags, in id order) into a byte string. Two runs are
+// byte-identical iff the whole battle outcome is identical.
+std::string serializeState(const eaw::SimState& state) {
+    std::string out;
+    auto put = [&](const void* p, size_t n) {
+        out.append(static_cast<const char*>(p), n);
+    };
+    for (const eaw::GameObject* o : state.allObjects()) {
+        put(&o->id, sizeof(o->id));
+        put(&o->position, sizeof(o->position));
+        put(&o->hull, sizeof(o->hull));
+        put(&o->shield, sizeof(o->shield));
+        put(&o->energy, sizeof(o->energy));
+        put(&o->alive, sizeof(o->alive));
+        put(&o->hidden, sizeof(o->hidden));
+        put(&o->attackTargetId, sizeof(o->attackTargetId));
+        put(&o->hasMoveTarget, sizeof(o->hasMoveTarget));
+        put(&o->moveTarget, sizeof(o->moveTarget));
+        put(&o->attackCooldown, sizeof(o->attackCooldown));
+    }
+    return out;
+}
+
+// Runs a scripted two-side battle for `ticks` and returns the serialized
+// state. Same setup every call (deterministic seed, fixed unit types).
+std::string runDeterministicBattle(unsigned workers, int ticks) {
+    eaw::Simulation sim(workers);
+    eaw::SimState& state = sim.sim();
+    eaw::Player& rebel = state.addPlayer("Rebel Alliance", "REBEL");
+    eaw::Player& empire = state.addPlayer("Galactic Empire", "EMPIRE");
+    rebel.human = true;
+
+    eaw::ObjectType rf;
+    rf.name = "REBEL_FIGHTER";
+    rf.properties = {"Unit"};
+    rf.categories = {"Fighter"};
+    rf.damage = 0.010; rf.attackRate = 4.0; rf.maxRange = 300.0;
+    rf.moveSpeed = 50.0;
+    rf.affiliatedFactions = {"REBEL"};
+    state.addType(std::move(rf));
+    eaw::ObjectType rc;
+    rc.name = "REBEL_CAPITAL";
+    rc.properties = {"Unit"};
+    rc.categories = {"Capital"};
+    rc.damage = 0.050; rc.attackRate = 0.8; rc.maxRange = 500.0;
+    rc.moveSpeed = 30.0;
+    rc.affiliatedFactions = {"REBEL"};
+    state.addType(std::move(rc));
+    eaw::ObjectType ef;
+    ef.name = "EMPIRE_FIGHTER";
+    ef.properties = {"Unit"};
+    ef.categories = {"Fighter"};
+    ef.damage = 0.011; ef.attackRate = 4.0; ef.maxRange = 300.0;
+    ef.moveSpeed = 50.0;
+    ef.affiliatedFactions = {"EMPIRE"};
+    state.addType(std::move(ef));
+    eaw::ObjectType ec;
+    ec.name = "EMPIRE_CAPITAL";
+    ec.properties = {"Unit"};
+    ec.categories = {"Capital"};
+    ec.damage = 0.055; ec.attackRate = 0.8; ec.maxRange = 500.0;
+    ec.moveSpeed = 30.0;
+    ec.affiliatedFactions = {"EMPIRE"};
+    state.addType(std::move(ec));
+
+    // Fixed formation: 8 fighters + 2 capitals per side, 600 units apart.
+    for (int i = 0; i < 8; ++i) {
+        state.spawnUnit("REBEL_FIGHTER", rebel.id, {(i % 8) * 12.0, (i / 8) * 12.0, (i % 3) * 15.0});
+        state.spawnUnit("EMPIRE_FIGHTER", empire.id, {600.0 + (i % 8) * 12.0, (i / 8) * 12.0, (i % 3) * 15.0});
+    }
+    for (int i = 0; i < 2; ++i) {
+        state.spawnUnit("REBEL_CAPITAL", rebel.id, {(i % 2) * 36.0, (i / 2) * 36.0, 10.0});
+        state.spawnUnit("EMPIRE_CAPITAL", empire.id, {600.0 + (i % 2) * 36.0, (i / 2) * 36.0, 10.0});
+    }
+
+    sim.scripts().runScript(
+        "for i, o in ipairs(Find_All_Objects_Of_Type('REBEL_FIGHTER')) do\n"
+        "  o:Attack_Target(Find_First_Object('EMPIRE_FIGHTER'))\n"
+        "  o:Move_To(Find_First_Object('EMPIRE_CAPITAL'))\n"
+        "end\n"
+        "for i, o in ipairs(Find_All_Objects_Of_Type('REBEL_CAPITAL')) do\n"
+        "  o:Attack_Target(Find_First_Object('EMPIRE_CAPITAL'))\n"
+        "end\n"
+        "for i, o in ipairs(Find_All_Objects_Of_Type('EMPIRE_FIGHTER')) do\n"
+        "  o:Attack_Target(Find_First_Object('REBEL_FIGHTER'))\n"
+        "  o:Move_To(Find_First_Object('REBEL_CAPITAL'))\n"
+        "end\n"
+        "for i, o in ipairs(Find_All_Objects_Of_Type('EMPIRE_CAPITAL')) do\n"
+        "  o:Attack_Target(Find_First_Object('REBEL_CAPITAL'))\n"
+        "end\n");
+    // Random numbers used by scripts must be seeded identically per run for
+    // the byte-identical check (they are: the engine's GameRandom uses a
+    // static mt19937 seeded once — fine, no script calls it here).
+    for (int i = 0; i < ticks; ++i) sim.tick(1.0 / 30.0);
+    return serializeState(state);
+}
+
+void testRepeatRunByteIdentical() {
+    // The determinism guard-rail: the same battle run 3 times (1 worker,
+    // 2 workers, 4 workers) must produce byte-identical state. This catches
+    // nondeterminism from new subsystems (races, unseeded randoms, unordered
+    // iteration) before it reaches the --compare demo.
+    const int ticks = 360;
+    std::string a = runDeterministicBattle(1, ticks);
+    std::string b = runDeterministicBattle(2, ticks);
+    std::string c = runDeterministicBattle(4, ticks);
+    check(a.size() > 0, "serialized battle state is non-empty");
+    check(a == b, "1-worker vs 2-worker battle is byte-identical");
+    check(a == c, "1-worker vs 4-worker battle is byte-identical");
+}
+
 } // namespace
 
 int main() {
@@ -273,6 +385,7 @@ int main() {
     testUnitNavigatesAroundObstacle();
     testConfigureGameConstants();
     testConfigureDefaultsUnchanged();
+    testRepeatRunByteIdentical();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;

@@ -16,6 +16,12 @@
 //   <query> { Parameter_* = ... }  — parameterized calls (category/type
 //                                    filters, hardpoint types)
 //   Function_<name>.Evaluate  — evaluate another named equation (chaining)
+//   Variable_Self.IsTargetingPriority  — 1.0 when the candidate's category is
+//                                    the self object's top targeting priority
+//                                    (Set_Targeting_Priorities), else 0.0.
+//                                    Lets mod perception equations consume the
+//                                    priority tables; the engine's own scoring
+//                                    applies the same tables as a tie-break.
 //
 // Queries supported over the sim's object model: Health, Shield, Force
 // (unit count / hull sum in range), FriendlyForce/EnemyForce (by category

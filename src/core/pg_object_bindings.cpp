@@ -848,6 +848,131 @@ int objEjectGarrison(lua_State* s) {
     return 0;
 }
 
+// ---- formations -----------------------------------------------------------
+
+// A "formation" is a group of units that move/attack together: the object's
+// formation members (created by Set_Formation) follow its position and
+// attack its target. Mods use this for squad behavior (the game's
+// Formation_Attack / Formation_Move / Set_Formation documented surface).
+// State lives in SimState (see object_model.h — the sim's per-tick update
+// moves members toward the leader).
+
+int objSetFormation(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    SimState* sim = w->sim;
+    GameObject* leader = sim->object(w->id);
+    if (!leader) return 0;
+    // Arg 2: a table of object wrappers (the formation members).
+    std::vector<int> members;
+    if (lua_istable(s, 2)) {
+        lua_pushnil(s);
+        while (lua_next(s, 2) != 0) {
+            if (lua_isuserdata(s, -1)) {
+                Wrapper* m = checkWrapper(s, -1);
+                if (m->kind == WrapperKind::Object) members.push_back(m->id);
+            }
+            lua_pop(s, 1);
+        }
+    }
+    sim->setFormation(w->id, members);
+    return 0;
+}
+
+int objFormationAttack(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* leader = w->sim->object(w->id);
+    if (!leader || !lua_isuserdata(s, 2)) { lua_pushnil(s); return 1; }
+    Wrapper* t = checkWrapper(s, 2);
+    if (t->kind != WrapperKind::Object) { lua_pushnil(s); return 1; }
+    leader->attackTargetId = t->id;
+    if (const Formation* f = w->sim->formation(w->id)) {
+        for (int id : f->members) {
+            GameObject* m = w->sim->object(id);
+            if (m && m->alive) m->attackTargetId = t->id;
+        }
+    }
+    pushCommandBlock(s, w->sim, 0);
+    return 1;
+}
+
+int objFormationMove(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* leader = w->sim->object(w->id);
+    if (!leader) { lua_pushnil(s); return 1; }
+    Vec3 target;
+    if (!targetPosition(s, 2, target)) { lua_pushnil(s); return 1; }
+    leader->hasMoveTarget = true;
+    leader->moveTarget = target;
+    if (const Formation* f = w->sim->formation(w->id)) {
+        for (int id : f->members) {
+            GameObject* m = w->sim->object(id);
+            if (m && m->alive) {
+                m->hasMoveTarget = true;
+                m->moveTarget = target;
+            }
+        }
+    }
+    pushCommandBlock(s, w->sim, 0);
+    return 1;
+}
+
+// ---- hull / shield setters ------------------------------------------------
+
+// Clamps a normalized value into 0..1 (the sim's hull/shield scale).
+double clampUnit(double v) { return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v); }
+
+int objSetHull(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* o = w->sim->object(w->id);
+    double v = luaL_checknumber(s, 2);
+    if (o) o->hull = clampUnit(v);
+    return 0;
+}
+
+int objSetShield(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* o = w->sim->object(w->id);
+    double v = luaL_checknumber(s, 2);
+    if (o) o->shield = clampUnit(v);
+    return 0;
+}
+
+int objAddHull(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* o = w->sim->object(w->id);
+    double v = luaL_checknumber(s, 2);
+    if (o) o->hull = clampUnit(o->hull + v);
+    return 0;
+}
+
+int objAddShield(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* o = w->sim->object(w->id);
+    double v = luaL_checknumber(s, 2);
+    if (o) o->shield = clampUnit(o->shield + v);
+    return 0;
+}
+
+int objApplyDamage(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* o = w->sim->object(w->id);
+    double dmg = luaL_checknumber(s, 2);
+    if (!o) return 0;
+    if (o->invulnerable) return 0;
+    // Damage applies to shields first, then hull (the game's order).
+    double remaining = dmg;
+    if (o->shield > 0.0) {
+        double absorbed = std::min(o->shield, remaining);
+        o->shield -= absorbed;
+        remaining -= absorbed;
+    }
+    if (remaining > 0.0) {
+        o->hull = std::max(0.0, o->hull - remaining);
+        if (o->hull == 0.0) o->alive = false;
+    }
+    return 0;
+}
+
 // ---- global spawn ---------------------------------------------------------
 
 int createPosition(lua_State* s) {
@@ -959,6 +1084,9 @@ const MethodEntry kObjectMethods[] = {
     {"Get_Force", objGetForce},
     {"Set_Targeting_Priorities", objSetTargetingPrioritiesFn},
     {"Set_Land_AI_Targeting_Priorities", objSetLandTargetingPrioritiesFn},
+    {"Set_Formation", objSetFormation},
+    {"Formation_Attack", objFormationAttack},
+    {"Formation_Move", objFormationMove},
     {"Get_Garrisoned_Units", objGetGarrisonedUnits},
     {"Has_Garrison", objHasGarrison},
     {"Is_In_Garrison", objIsInGarrison},
@@ -972,6 +1100,11 @@ const MethodEntry kObjectMethods[] = {
     {"Lock_Current_Orders", objLockCurrentOrders},
     {"Unlock_Current_Orders", objUnlockCurrentOrders},
     {"Take_Damage", objTakeDamage},
+    {"Set_Hull", objSetHull},
+    {"Set_Shield", objSetShield},
+    {"Add_Hull", objAddHull},
+    {"Add_Shield", objAddShield},
+    {"Apply_Damage", objApplyDamage},
     {"Despawn", objDespawn},
     {"Make_Invulnerable", objMakeInvulnerable},
     {"Set_Selectable", objSetSelectable},

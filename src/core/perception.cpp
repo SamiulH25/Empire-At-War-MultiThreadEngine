@@ -356,6 +356,23 @@ double PerceptionSystem::evalQuery(
     if (field == "IsType") {
         return t && t->name == catMask ? 1.0 : 0.0;
     }
+    if (field == "IsTargetingPriority") {
+        // 1.0 when the candidate's category is the self object's top targeting
+        // priority (Set_Targeting_Priorities); else 0.0. Lets mod equations
+        // consume the priority tables. The engine's findTarget applies the
+        // same tables as a deterministic score tie-break.
+        if (!ctx.self) return 0.0;
+        const std::vector<std::string>& prio =
+            ctx.self->targetingPriorities.empty()
+                ? ctx.self->landTargetingPriorities
+                : ctx.self->targetingPriorities;
+        if (prio.empty()) return 0.0;
+        if (!t) return 0.0;
+        for (const std::string& c : t->categories) {
+            if (c == prio.front()) return 1.0;
+        }
+        return 0.0;
+    }
     if (field == "TimeLastSeen" || field == "TimeLastSeenUnnormalized") {
         // Fog of war: time since the evaluating player saw the target.
         // (0 while visible, growing after it leaves sight.)

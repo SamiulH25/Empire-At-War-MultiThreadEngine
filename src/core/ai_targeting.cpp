@@ -31,6 +31,32 @@ std::vector<const GameObject*> candidates(const SimState& sim,
     return out;
 }
 
+// Targeting-priority bonus for a candidate: the index (0-based) of the
+// candidate's category in `prio` (the self object's priority table), or
+// prio.size() when no category matches. Smaller = higher priority; the
+// score tie-break below picks the lowest. Empty table = all equal.
+int priorityRank(const std::vector<std::string>& prio,
+                 const SimState& sim, const GameObject* cand) {
+    if (prio.empty()) return 0;
+    const ObjectType* t = sim.type(cand->typeName);
+    if (!t) return static_cast<int>(prio.size());
+    for (size_t i = 0; i < prio.size(); ++i) {
+        for (const std::string& c : t->categories) {
+            if (c == prio[i]) return static_cast<int>(i);
+        }
+    }
+    return static_cast<int>(prio.size());
+}
+
+// The priority table that applies to this force's self object (space vs
+// land, matching Set_Targeting_Priorities vs Set_Land_AI_Targeting_Priorities).
+const std::vector<std::string>& forcePriorityTable(const GameObject* self) {
+    static const std::vector<std::string> kEmpty;
+    if (!self) return kEmpty;
+    if (!self->targetingPriorities.empty()) return self->targetingPriorities;
+    return self->landTargetingPriorities;
+}
+
 TargetChoice reduceBest(const SimState& sim, const TaskForce& force,
                         const PerceptionSystem& per, const std::string& eq,
                         double gameAge,
@@ -38,6 +64,7 @@ TargetChoice reduceBest(const SimState& sim, const TaskForce& force,
     TargetChoice best;
     best.score = -std::numeric_limits<double>::max();
     const GameObject* self = forceSelf(sim, force);
+    const std::vector<std::string>& prio = forcePriorityTable(self);
     for (const GameObject* c : cands) {
         PerceptionContext ctx;
         ctx.sim = &sim;
@@ -45,9 +72,14 @@ TargetChoice reduceBest(const SimState& sim, const TaskForce& force,
         ctx.target = c;
         ctx.gameAge = gameAge;
         double score = per.evaluate(eq, ctx);
+        // Targeting priorities: the highest-priority category wins ties.
+        // The rank is small (table size), so it cannot mask real score
+        // differences; `prioRank` is constant when no table is set.
+        double rank = static_cast<double>(priorityRank(prio, sim, c));
+        double adjusted = score - rank / 1e6;
         // Strictly greater: ties keep the lower id (candidates are id-sorted).
-        if (score > best.score) {
-            best.score = score;
+        if (adjusted > best.score) {
+            best.score = adjusted;
             best.objectId = c->id;
             best.found = true;
         }
@@ -64,8 +96,16 @@ TargetChoice AiTargeting::findTarget(const SimState& sim, const TaskForce& force
     if (cands.empty()) return {};
 
     // Parallel evaluation: score each candidate on a worker (pure reads).
+    // The priority rank is a per-candidate constant (pure read of the self
+    // object's table + the candidate's type), so it is computed here — no
+    // shared writes.
     std::vector<double> scores(cands.size());
+    std::vector<double> ranks(cands.size());
     const GameObject* self = forceSelf(sim, force);
+    const std::vector<std::string>& prio = forcePriorityTable(self);
+    for (size_t i = 0; i < cands.size(); ++i) {
+        ranks[i] = static_cast<double>(priorityRank(prio, sim, cands[i]));
+    }
     jobs_.parallel_for(static_cast<int64_t>(cands.size()), [&](int64_t a, int64_t b) {
         for (int64_t i = a; i < b; ++i) {
             PerceptionContext ctx;
@@ -77,12 +117,14 @@ TargetChoice AiTargeting::findTarget(const SimState& sim, const TaskForce& force
         }
     });
 
-    // Serial max-reduction (deterministic tie-break by id order).
+    // Serial max-reduction (deterministic tie-break by id order, then by
+    // targeting priority — same adjusted score as reduceBest).
     TargetChoice best;
     best.score = -std::numeric_limits<double>::max();
     for (size_t i = 0; i < cands.size(); ++i) {
-        if (scores[i] > best.score) {
-            best.score = scores[i];
+        double adjusted = scores[i] - ranks[i] / 1e6;
+        if (adjusted > best.score) {
+            best.score = adjusted;
             best.objectId = cands[i]->id;
             best.found = true;
         }

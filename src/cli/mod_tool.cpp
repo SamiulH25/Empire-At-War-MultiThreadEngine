@@ -17,6 +17,15 @@
 //       Scans the mod's Lua scripts for engine binding calls (the PG*
 //       surface), lists which registered bindings they use and which
 //       documented bindings are still missing from the engine.
+//
+//   mod_tool run <mod_dir> <script-path> [--game <base game dir>]
+//       [--ticks N] [--battle] [--galaxy]
+//       Executes one mod script (loose file or meg entry, e.g.
+//       DATA\SCRIPTS\LIBRARY\PGTASKFORCE.LUA) against a live engine: the
+//       script is loaded through ScriptManager::loadScript and pumped for
+//       --ticks frames. Runtime errors are reported with the script name;
+//       exit code 0 = the script ran, 1 = load/pump error, 2 = script
+//       requested a documented-but-missing binding (helpful gap report).
 #include "core/lua_wrappers.h"
 #include "core/meg_file.h"
 #include "core/meg_manager.h"
@@ -34,6 +43,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <thread>
@@ -695,6 +705,143 @@ int cmdBindings(const std::string& modRoot) {
     return missing.empty() ? 0 : 2;
 }
 
+// ---- run ----------------------------------------------------------------
+
+// Builds a real battle/galactic sim state and returns it (like cmdBattle /
+// cmdGalaxy) so `mod_tool run` can execute scripts with game state to query.
+// The mod data is mounted into the Simulation's OWN file manager — that is
+// the manager ScriptManager::loadScript reads from (the sim's scripts_ holds
+// a reference to the Simulation's private files_). Returns nullptr on fatal
+// setup errors (message already printed).
+std::unique_ptr<eaw::Simulation> buildRunSim(const std::string& modRoot,
+                                             const std::string& gameRoot) {
+    auto sim = std::make_unique<eaw::Simulation>(4);
+    eaw::MegaFileManager& files = sim->files();
+
+    // Reuse the full mod mount (base megas + mod megas + loose override).
+    std::vector<std::vector<uint8_t>> archiveBytes;
+    std::vector<eaw::MegFile> megas;
+    try {
+        loadModData(files, modRoot, gameRoot, archiveBytes, megas);
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "mount failed (%s): %s\n", modRoot.c_str(), ex.what());
+        return nullptr;
+    }
+
+    eaw::SimState& state = sim->sim();
+    eaw::Player& rebel = state.addPlayer("Rebel Alliance", "REBEL");
+    eaw::Player& empire = state.addPlayer("Galactic Empire", "EMPIRE");
+    rebel.human = true;
+
+    // Real unit types from the mod's file lists (loose wins).
+    std::vector<std::string> names = loadDiscoveredUnitTypes(state, files);
+    if (names.empty()) {
+        std::fprintf(stderr, "no combat units found — is the mod data present?\n");
+        return nullptr;
+    }
+    std::set<std::string> used;
+    std::string rl = pickType(state, names, used); used.insert(rl);
+    std::string rh = pickType(state, names, used); used.insert(rh);
+    std::string el = pickType(state, names, used); used.insert(el);
+    std::string eh = pickType(state, names, used);
+    if (rh.empty()) rh = rl;
+    if (eh.empty()) eh = el;
+
+    // A small standoff: 8 fighters + 2 capitals per side, spaced like cmdBattle.
+    for (int i = 0; i < 8; ++i) {
+        state.spawnUnit(rl, rebel.id, {(i % 8) * 12.0, (i / 8) * 12.0, (i % 3) * 15.0});
+        state.spawnUnit(el, empire.id, {600.0 + (i % 8) * 12.0, (i / 8) * 12.0, (i % 3) * 15.0});
+    }
+    for (int i = 0; i < 2; ++i) {
+        state.spawnUnit(rh, rebel.id, {(i % 2) * 36.0, (i / 2) * 36.0, 10.0});
+        state.spawnUnit(eh, empire.id, {600.0 + (i % 2) * 36.0, (i / 2) * 36.0, 10.0});
+    }
+    std::printf("sim: %s x8 + %s x2 vs %s x8 + %s x2 (mod units)\n",
+                rl.c_str(), rh.c_str(), el.c_str(), eh.c_str());
+
+    // A couple of planets for galactic bindings (FindPlanet / Get_Planet).
+    state.addPlanet("Corellia", "REBEL", {100, 0, 0});
+    state.addPlanet("Kuat", "EMPIRE", {900, 0, 0});
+    return sim;
+}
+
+// Scans `text` for any documented-but-missing binding name; returns the first
+// match (or "" if none).
+std::string firstMissingBinding(const std::string& text) {
+    for (const std::string& b : documentedButMissing()) {
+        if (text.find(b) != std::string::npos) return b;
+    }
+    return "";
+}
+
+// Loads a script from the mounted file table (loose or meg). `scriptPath` may
+// be DATA\... (game convention) or a plain name; the manager is
+// case-insensitive. Returns the bytes (empty if not found).
+std::vector<uint8_t> readMountedScript(eaw::MegaFileManager& files,
+                                       const std::string& scriptPath) {
+    std::string norm = scriptPath;
+    std::replace(norm.begin(), norm.end(), '\\', '/');
+    std::string upper = toUpper(norm);
+    if (upper.rfind("DATA/", 0) != 0) upper = "DATA/" + upper;
+    try {
+        return files.read(upper);
+    } catch (const std::exception&) {
+        return {};
+    }
+}
+
+int cmdRun(const std::string& modRoot, const std::string& scriptPath,
+           const std::string& gameRoot, int ticks) {
+    auto sim = buildRunSim(modRoot, gameRoot);
+    if (!sim) return 1;
+    eaw::MegaFileManager& files = sim->files();
+
+    // Pre-scan the script text for documented-but-missing bindings so we can
+    // distinguish "the engine doesn't have this yet" from a real script error.
+    auto scriptBytes = readMountedScript(files, scriptPath);
+    if (scriptBytes.empty()) {
+        std::fprintf(stderr, "script not found in mod data: %s\n", scriptPath.c_str());
+        return 1;
+    }
+    std::string text(scriptBytes.begin(), scriptBytes.end());
+    std::string missing = firstMissingBinding(text);
+    if (!missing.empty()) {
+        std::fprintf(stderr,
+                     "script uses '%s', which the engine does not register yet — "
+                     "cannot execute it (see docs/progress/05-whats-missing.md item 6)\n",
+                     missing.c_str());
+        return 2;
+    }
+
+    // Drive the script through the engine's runtime backbone: loadScript +
+    // pump (threads, timers, events) — not a one-shot runScript.
+    eaw::ScriptManager& scripts = sim->scripts();
+    std::string loadKey = toUpper(scriptPath);
+    try {
+        scripts.loadScript(loadKey);
+        std::printf("loaded %s\n", scriptPath.c_str());
+    } catch (const eaw::LuaError& ex) {
+        std::fprintf(stderr, "load error (%s): %s\n", scriptPath.c_str(), ex.what());
+        return 1;
+    } catch (const std::exception& ex) {
+        std::fprintf(stderr, "could not read script (%s): %s\n",
+                     scriptPath.c_str(), ex.what());
+        return 1;
+    }
+
+    const double dt = 1.0 / 30.0;
+    try {
+        for (int i = 0; i < ticks; ++i) sim->tick(dt);
+    } catch (const eaw::LuaError& ex) {
+        std::fprintf(stderr, "runtime error while pumping (%s): %s\n",
+                     scriptPath.c_str(), ex.what());
+        return 1;
+    }
+    std::printf("ran %d ticks (%.1fs sim time), %d live script threads\n",
+                ticks, ticks * dt, scripts.threadCount());
+    return 0;
+}
+
 void usage() {
     std::printf(
         "usage:\n"
@@ -703,7 +850,9 @@ void usage() {
         "                 [--workers N] [--ticks N] [--fighters N] [--capitals N]\n"
         "                 [--land]\n"
         "  mod_tool galaxy <mod_dir> [--game <base game dir>]\n"
-        "  mod_tool bindings <mod_dir>\n");
+        "  mod_tool bindings <mod_dir>\n"
+        "  mod_tool run <mod_dir> <script-path> [--game <base game dir>]\n"
+        "                 [--ticks N]\n");
 }
 
 } // namespace
@@ -713,7 +862,9 @@ int main(int argc, char** argv) {
     std::string cmd = argv[1];
     std::string modRoot = argv[2];
     std::string gameRoot;
+    std::string scriptPath;
     BattleConfig cfg;
+    int runTicks = 120;
     for (int i = 3; i < argc; ++i) {
         if (std::strcmp(argv[i], "--game") == 0 && i + 1 < argc) {
             gameRoot = argv[++i];
@@ -721,18 +872,25 @@ int main(int argc, char** argv) {
             cfg.workers = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--ticks") == 0 && i + 1 < argc) {
             cfg.ticks = std::atoi(argv[++i]);
+            runTicks = cfg.ticks;
         } else if (std::strcmp(argv[i], "--fighters") == 0 && i + 1 < argc) {
             cfg.fighters = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--capitals") == 0 && i + 1 < argc) {
             cfg.capitals = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--land") == 0) {
             cfg.land = true;
+        } else if (scriptPath.empty()) {
+            scriptPath = argv[i];
         }
     }
     if (cmd == "scan") return cmdScan(modRoot, gameRoot);
     if (cmd == "battle") return cmdBattle(modRoot, gameRoot, cfg);
     if (cmd == "galaxy") return cmdGalaxy(modRoot, gameRoot);
     if (cmd == "bindings") return cmdBindings(modRoot);
+    if (cmd == "run") {
+        if (scriptPath.empty()) { usage(); return 1; }
+        return cmdRun(modRoot, scriptPath, gameRoot, runTicks);
+    }
     usage();
     return 1;
 }

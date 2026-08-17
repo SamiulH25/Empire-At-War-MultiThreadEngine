@@ -122,6 +122,37 @@ void testThreadErrorPropagates() {
     check(threw, "thread error propagates with message");
 }
 
+void testRequireResolvesMegScript() {
+    // require("PGTaskForce") must resolve through the file manager to
+    // DATA\SCRIPTS\LIBRARY\PGTASKFORCE.LUA (the game's module convention).
+    auto lib = makeMeg("DATA\\SCRIPTS\\LIBRARY\\PGTASKFORCE.LUA",
+                       "function TF_Assemble() return 42 end\n");
+    eaw::MegFile mf = eaw::MegFile::Parse(lib);
+    eaw::MegaFileManager files;
+    files.addArchive("lib.meg", lib, mf);
+
+    eaw::ScriptManager sm(files);
+    sm.runScript("require('PGTaskForce')\ngot = TF_Assemble()\n");
+    lua_getglobal(sm.state(), "got");
+    check(lua_tointeger(sm.state(), -1) == 42,
+          "require resolves a library script from the meg");
+    lua_pop(sm.state(), 1);
+}
+
+void testRequireNativeModuleStub() {
+    // The game's native binding modules (PGAICommands, pgcommands,
+    // PGBaseDefinitions) have no Lua file; require must return an empty table
+    // so library scripts can load and define their functions.
+    eaw::MegaFileManager files;
+    eaw::ScriptManager sm(files);
+    sm.runScript(
+        "m = require('PGAICommands')\n"
+        "ok = type(m) == 'table'\n");
+    lua_getglobal(sm.state(), "ok");
+    check(lua_toboolean(sm.state(), -1), "native module require returns a table");
+    lua_pop(sm.state(), 1);
+}
+
 } // namespace
 
 int main() {
@@ -130,6 +161,8 @@ int main() {
     testPumpAdvancesTime();
     testThreadLifecycle();
     testThreadErrorPropagates();
+    testRequireResolvesMegScript();
+    testRequireNativeModuleStub();
     if (failures == 0) { std::printf("ALL TESTS PASSED\n"); return 0; }
     std::printf("%d FAILURES\n", failures);
     return 1;
