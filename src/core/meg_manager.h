@@ -8,6 +8,7 @@
 
 #include "core/meg_file.h"
 
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -17,8 +18,8 @@ namespace eaw {
 class MegaFileManager {
 public:
     // Adds an archive; later archives override earlier ones for duplicate names.
-    // `bytes` must outlive the manager (or be copied — we copy the entries but
-    // reference the bytes for reads).
+    // The manager copies the meg's entry table AND the archive bytes, so the
+    // caller's `bytes`/`meg` may be temporary.
     void addArchive(const std::string& label, const std::vector<uint8_t>& bytes,
                     const MegFile& meg);
 
@@ -42,8 +43,8 @@ public:
 
 private:
     struct ArchiveRef {
-        const std::vector<uint8_t>* bytes = nullptr;
-        const MegFile* meg = nullptr;
+        std::shared_ptr<const std::vector<uint8_t>> bytes; // owned archive copy
+        std::shared_ptr<MegFile> meg;                       // owned meg copy
         int order = 0; // higher = later (overrides)
     };
 

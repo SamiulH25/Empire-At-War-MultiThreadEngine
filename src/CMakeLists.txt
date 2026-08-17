@@ -32,6 +32,7 @@ add_library(eaw_core STATIC
     core/ai_targeting.cpp
     core/ai_driver.cpp
     core/unit_data_loader.cpp
+    core/mod_loader.cpp
     core/pg_bindings.cpp
     core/pg_object_bindings.cpp
     core/pg_event_bindings.cpp
@@ -238,6 +239,12 @@ add_executable(mod_compat_tests
 )
 target_link_libraries(mod_compat_tests PRIVATE eaw_core)
 add_test(NAME mod_compat_tests COMMAND mod_compat_tests)
+
+add_executable(mod_loader_tests
+    tests/test_mod_loader.cpp
+)
+target_link_libraries(mod_loader_tests PRIVATE eaw_core)
+add_test(NAME mod_loader_tests COMMAND mod_loader_tests)
 
 add_executable(ability_tests
     tests/test_abilities.cpp

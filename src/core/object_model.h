@@ -117,6 +117,11 @@ struct GameObject {
     bool hasMoveTarget = false;
     Vec3 moveTarget;               // set by Move_To; sim integrates toward it
     double moveSpeed = 50.0;       // units per second
+    // Targeting priority tables (Set_Targeting_Priorities /
+    // Set_Land_AI_Targeting_Priorities): ordered list of category names the
+    // unit prefers to engage. Empty = default (attack nearest).
+    std::vector<std::string> targetingPriorities;
+    std::vector<std::string> landTargetingPriorities;
     // Path-following state (filled by the pathfinding step).
     std::vector<Vec3> path;        // remaining waypoints (world coords)
     size_t pathIndex = 0;

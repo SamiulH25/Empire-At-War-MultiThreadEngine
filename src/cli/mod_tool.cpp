@@ -20,6 +20,7 @@
 #include "core/lua_wrappers.h"
 #include "core/meg_file.h"
 #include "core/meg_manager.h"
+#include "core/mod_loader.h"
 #include "core/simulation.h"
 #include "core/unit_data_loader.h"
 #include "core/xml.h"
@@ -74,13 +75,18 @@ std::string toUpper(std::string s) {
 void walkDir(const std::string& base, const std::string& dir,
              std::vector<std::string>& out) {
     std::error_code ec;
+    // Normalize base (no trailing slash) so relative paths come out clean.
+    std::string baseNorm = base;
+    while (baseNorm.size() > 1 && (baseNorm.back() == '\\' || baseNorm.back() == '/')) {
+        baseNorm.pop_back();
+    }
     for (const auto& entry : fs::recursive_directory_iterator(dir, ec)) {
         if (ec) break;
         if (!entry.is_regular_file(ec)) continue;
-        std::string rel = entry.path().string().substr(base.size() + 1);
+        std::string rel = entry.path().string().substr(baseNorm.size() + 1);
         std::replace(rel.begin(), rel.end(), '\\', '/');
         std::string upper = toUpper(rel);
-        std::string baseUpper = toUpper(base);
+        std::string baseUpper = toUpper(baseNorm);
         if (baseUpper.size() >= 4 &&
             baseUpper.substr(baseUpper.size() - 4) == "DATA") {
             upper = "DATA/" + upper;
@@ -90,11 +96,19 @@ void walkDir(const std::string& base, const std::string& dir,
 }
 
 // Loads base-game megas from <game>/Data/*.meg (the fallback layer).
+// Accepts the game root, root\Data, or root\GameData\Data (the real layout).
 void loadBaseMegas(eaw::MegaFileManager& files, const std::string& gameRoot,
                    std::vector<std::vector<uint8_t>>& archiveBytes,
                    std::vector<eaw::MegFile>& megas) {
     if (gameRoot.empty()) return;
     std::string dataDir = gameRoot + "\\Data\\";
+    if (!std::filesystem::exists(std::filesystem::path(dataDir + "megafiles.xml"))) {
+        // Try the game's GameData\Data layout.
+        std::string gd = gameRoot + "\\GameData\\Data\\";
+        if (std::filesystem::exists(std::filesystem::path(gd + "megafiles.xml"))) {
+            dataDir = gd;
+        }
+    }
     std::vector<std::string> megNames;
     walkDir(dataDir, dataDir, megNames);
     std::sort(megNames.begin(), megNames.end());
@@ -116,21 +130,16 @@ void loadBaseMegas(eaw::MegaFileManager& files, const std::string& gameRoot,
     }
 }
 
-// Loads a mod's Data folder as loose files (the override layer).
-void loadModLoose(eaw::MegaFileManager& files, const std::string& modRoot) {
-    std::string dataDir = modRoot + "\\Data";
-    std::vector<std::string> rels;
-    walkDir(dataDir, dataDir, rels);
-    for (const std::string& rel : rels) {
-        // rel has the DATA/ prefix; strip it for the disk path.
-        std::string diskName = rel;
-        if (diskName.rfind("DATA/", 0) == 0) diskName = diskName.substr(5);
-        std::string path = dataDir + "\\" + diskName;
-        std::string bytes = readFile(path);
-        if (!bytes.empty()) {
-            files.addLooseFile(rel, std::vector<uint8_t>(bytes.begin(), bytes.end()));
-        }
-    }
+// Full mod mount: base game megas (fallback) + mod's own megas + loose files
+// (override). Uses ModLoader for the mod side so custom megas (like TR's
+// UGCCEAIDATA.meg) are included.
+eaw::ModReport loadModData(eaw::MegaFileManager& files, const std::string& modRoot,
+                           const std::string& gameRoot,
+                           std::vector<std::vector<uint8_t>>& archiveBytes,
+                           std::vector<eaw::MegFile>& megas) {
+    loadBaseMegas(files, gameRoot, archiveBytes, megas);
+    // ModLoader loads the mod's megas + loose files on top.
+    return eaw::ModLoader::load(files, modRoot, "");
 }
 
 // ---- discovery-driven loading -------------------------------------------
@@ -223,6 +232,17 @@ std::vector<std::string> loadDiscoveredUnitTypes(eaw::SimState& state,
 std::vector<eaw::Planet> loadDiscoveredPlanets(eaw::MegaFileManager& files) {
     eaw::UnitDataLoader loader;
     std::vector<eaw::Planet> out;
+    // PLANETS.XML is not listed in GameObjectFiles.xml — it's a fixed name.
+    for (const std::string& f : {"DATA/XML/PLANETS.XML"}) {
+        if (!files.exists(f)) continue;
+        auto bytes = files.read(f);
+        try {
+            auto planets = loader.loadPlanets(std::string(bytes.begin(), bytes.end()));
+            out.insert(out.end(), planets.begin(), planets.end());
+        } catch (const std::exception&) {
+        }
+    }
+    // Also try whatever the file lists name (loose mods may rename it).
     auto discovered = discoverDataFiles(files);
     for (const std::string& f : discovered) {
         if (!hasSuffix(f, ".xml")) continue;
@@ -243,13 +263,14 @@ int cmdScan(const std::string& modRoot, const std::string& gameRoot) {
     eaw::MegaFileManager files;
     std::vector<std::vector<uint8_t>> archiveBytes;
     std::vector<eaw::MegFile> megas;
-    loadBaseMegas(files, gameRoot, archiveBytes, megas);
-    loadModLoose(files, modRoot);
+    eaw::ModReport report = loadModData(files, modRoot, gameRoot, archiveBytes, megas);
 
     std::printf("mod root : %s\n", modRoot.c_str());
     std::printf("base megas: %zu loaded", megas.size());
     if (!gameRoot.empty()) std::printf(" (from %s)", gameRoot.c_str());
-    std::printf("\nloose files (mod overrides): %zu\n", files.looseCount());
+    std::printf("\nmod megas: %d\n", report.megasLoaded);
+    for (const std::string& n : report.megNames) std::printf("    %s\n", n.c_str());
+    std::printf("loose files (mod overrides): %zu\n", files.looseCount());
 
     // Categorize the loose surface.
     int xml = 0, lua = 0, txt = 0, other = 0;
@@ -294,8 +315,7 @@ int cmdBattle(const std::string& modRoot, const std::string& gameRoot,
     eaw::MegaFileManager files;
     std::vector<std::vector<uint8_t>> archiveBytes;
     std::vector<eaw::MegFile> megas;
-    loadBaseMegas(files, gameRoot, archiveBytes, megas);
-    loadModLoose(files, modRoot);
+    loadModData(files, modRoot, gameRoot, archiveBytes, megas);
 
     eaw::Simulation sim(cfg.workers);
     eaw::SimState& state = sim.sim();
@@ -395,8 +415,7 @@ int cmdGalaxy(const std::string& modRoot, const std::string& gameRoot) {
     eaw::MegaFileManager files;
     std::vector<std::vector<uint8_t>> archiveBytes;
     std::vector<eaw::MegFile> megas;
-    loadBaseMegas(files, gameRoot, archiveBytes, megas);
-    loadModLoose(files, modRoot);
+    loadModData(files, modRoot, gameRoot, archiveBytes, megas);
 
     eaw::Simulation sim(4);
     eaw::SimState& state = sim.sim();
@@ -529,48 +548,87 @@ int cmdGalaxy(const std::string& modRoot, const std::string& gameRoot) {
 
 // ---- bindings -----------------------------------------------------------
 
-// The engine's registered binding names (from pg_bindings + object + event +
-// taskforce surfaces).
+// The engine's registered binding surface — globals (pg_bindings,
+// pg_object_bindings, pg_event_bindings, pg_taskforce_bindings) plus all
+// wrapper methods (object/player/type/position/command/taskforce/planet).
 std::set<std::string> engineBindings() {
     return {
-        // threads / time / globals (pg_bindings)
-        "Create_Thread", "Thread", "Thread_Kill", "Thread_Is_Thread_Active",
-        "GetCurrentTime", "GameRandom", "GameRandom_Get_Float", "Get_Game_Mode",
-        "_ScriptMessage", "lc", "GetThreadID",
-        // objects (pg_object_bindings)
+        // pg_bindings globals
+        "GlobalValue_Get", "GlobalValue_Set", "Create_Thread", "Thread",
+        "Thread_Is_Thread_Active", "Thread_Kill", "GetCurrentTime",
+        "GameRandom", "GameRandom_Get_Float", "Get_Game_Mode",
+        "_ScriptMessage", "lc",
+        // pg_object_bindings globals
         "Find_Player", "Find_Object_Type", "Find_All_Objects_Of_Type",
-        "Find_First_Object", "Find_Nearest", "Spawn_Unit", "Reinforce_Unit",
-        "Create_Position",
-        // events (pg_event_bindings)
+        "Find_First_Object", "Find_Nearest", "Create_Position",
+        "Spawn_Unit", "Reinforce_Unit",
+        // pg_event_bindings globals
         "Register_Timer", "Register_Death_Event", "Register_Attacked_Event",
-        "Register_Prox", "Cancel_Attacked_Event", "Process_Timers",
-        "Process_Death_Events", "Process_Attacked_Events", "Process_Proximities",
-        "Pump_Service",
-        // galactic (pg_taskforce_bindings)
+        "Cancel_Attacked_Event", "Register_Prox", "Process_Timers",
+        "Process_Death_Events", "Process_Attacked_Events",
+        "Process_Proximities", "Pump_Service",
+        // pg_taskforce_bindings globals
         "FindPlanet",
+        // Object methods
+        "Get_Hull", "Get_Health", "Get_Shield", "Get_Energy", "Get_Owner",
+        "Get_Faction", "Get_Type", "Get_ID", "Get_Position", "Get_Distance",
+        "Is_Category", "Has_Property", "Is_Valid", "Is_Hero", "Is_Selectable",
+        "Get_Name", "Get_Garrisoned_Units", "Has_Garrison", "Is_In_Garrison",
+        "Get_Time_Till_Dead", "Move_To", "Attack_Target", "Get_Attack_Target",
+        "Has_Attack_Target", "Release_Unit", "Lock_Current_Orders",
+        "Unlock_Current_Orders", "Take_Damage", "Despawn", "Make_Invulnerable",
+        "Set_Selectable", "Can_Garrison", "Garrison", "Try_Garrison",
+        "Leave_Garrison", "Eject_Garrison", "Activate_Ability", "Try_Ability",
+        "Use_Ability_If_Able", "Has_Ability", "Is_Ability_Active",
+        "Is_Ability_Ready", "Cancel_Ability", "Force_Ability_Recharge",
+        "Reset_Ability_Counter", "Get_Force", "Set_Targeting_Priorities",
+        "Set_Land_AI_Targeting_Priorities",
+        // Player methods
+        "Get_ID", "Get_Name", "Get_Faction_Name", "Get_Difficulty",
+        "Is_Human", "Get_Tech_Level", "Get_Credits", "Make_Ally",
+        "Make_Enemy", "Is_Ally", "Is_Enemy", "Get_Enemy", "Give_Money",
+        "Set_Tech_Level", "Unlock_Tech", "Lock_Tech",
+        // Type methods
+        "Get_Name", "Is_Hero", "Get_Build_Cost", "Get_Tech_Level",
+        "Get_Max_Range", "Get_Min_Range", "Is_Affected_By_Missile_Shield",
+        "Is_Affected_By_Laser_Defense",
+        // Position methods
+        "Get_XYZ",
+        // Command methods
+        "IsFinished", "Result",
+        // TaskForce methods
+        "Get_Goal_Type_Name", "Get_Stage", "Set_Stage", "Set_Plan_Result",
+        "Set_As_Goal_System_Removable", "Are_All_Units_On_Free_Store",
+        "Get_Self_Threat_Sum", "Add_Force", "Release_Unit", "Move_To",
+        "Attack_Target", "Garrison", "Leave_Garrison", "Get_Planet",
+        // Planet methods
+        "Get_Name", "Get_Owner",
     };
 }
 
 // The documented bindings mods may call that we have NOT registered yet.
 std::set<std::string> documentedButMissing() {
     return {
-        "Activate_Ability", "Try_Ability", "Use_Ability_If_Able",
-        "Has_Ability", "Is_Ability_Active", "Is_Ability_Ready",
-        "Get_Difficulty", "Get_Faction_Name", "Get_Tech_Level",
-        "Find_Path", "FindPlanet", "Move_To", "Attack_Move",
-        "Attack_Target", "Formation_Attack", "Formation_Move",
-        "Release_Unit", "Lock_Current_Orders", "Unlock_Current_Orders",
-        "Get_Unit_Table", "Get_Garrisoned_Units", "Get_Force_Count",
-        "Set_Targeting_Priorities", "Set_Land_AI_Targeting_Priorities",
-        "Get_Owner", "Get_Type", "Get_Name", "Get_ID", "Get_Hull",
-        "Get_Shield", "Get_Health", "Get_Energy", "Get_Position",
-        "Get_Distance", "Is_Category", "Has_Property", "Is_Valid",
-        "Is_Hero", "Has_Attack_Target", "Get_Attack_Target",
-        "Can_Garrison", "Garrison", "Leave_Garrison", "Eject_Garrison",
-        "Take_Damage", "Despawn", "Make_Invulnerable", "Set_Selectable",
-        "Give_Money", "Get_Credits", "Set_Tech_Level", "Unlock_Tech",
-        "Lock_Tech", "Make_Ally", "Make_Enemy", "Is_Ally", "Is_Enemy",
-        "Get_Enemy", "Spawn_Unit", "Reinforce_Unit",
+        // Targeting priority getters (not yet in the engine tables)
+        "Get_Targeting_Priorities",
+        // Free store / squad
+        "Get_Free_Store", "Get_Units_In_Free_Store",
+        // Formations
+        "Formation_Attack", "Formation_Move", "Set_Formation",
+        // Pathing
+        "Find_Path", "Get_Path", "Is_Path_Blocked",
+        // Damage / effects
+        "Set_Hull", "Set_Shield", "Add_Hull", "Add_Shield",
+        "Apply_Damage", "Apply_Force",
+        // Hero / unique
+        "Set_Hero", "Is_Unique", "Get_Unique_ID",
+        // Misc documented
+        "Get_Player_Count", "Set_Faction",
+        "Get_Current_Planet", "Set_Current_Planet",
+        "Get_Planet_Owner", "Set_Planet_Owner",
+        "Get_Planet_Faction", "Set_Planet_Faction",
+        "Set_Force_Planet", "Get_Force_Player",
+        "Set_Force_Player", "Get_Number_Of_Forces",
     };
 }
 
@@ -580,24 +638,46 @@ int cmdBindings(const std::string& modRoot) {
     walkDir(dataDir, dataDir, rels);
     std::set<std::string> used;
     std::set<std::string> usedInFiles;
-    for (const std::string& rel : rels) {
-        if (!hasSuffix(rel, ".lua")) continue;
-        std::string diskName = rel;
-        if (diskName.rfind("DATA/", 0) == 0) diskName = diskName.substr(5);
-        std::string text = readFile(dataDir + "\\" + diskName);
-        // Extract identifier-ish tokens (uppercased names) and match against
-        // the binding set (bytecode string tables are also readable this way).
+    auto scanText = [&](const std::string& text, const std::string& srcName) {
         for (const std::string& b : engineBindings()) {
             if (text.find(b) != std::string::npos) {
                 used.insert(b);
-                usedInFiles.insert(rel);
+                usedInFiles.insert(srcName);
             }
         }
         for (const std::string& b : documentedButMissing()) {
             if (text.find(b) != std::string::npos) {
                 used.insert(b);
-                usedInFiles.insert(rel);
+                usedInFiles.insert(srcName);
             }
+        }
+    };
+    // Loose Lua files.
+    for (const std::string& rel : rels) {
+        if (!hasSuffix(rel, ".lua")) continue;
+        std::string diskName = rel;
+        if (diskName.rfind("DATA/", 0) == 0) diskName = diskName.substr(5);
+        scanText(readFile(dataDir + "\\" + diskName), rel);
+    }
+    // Lua inside the mod's megas (e.g. UGCCEAIDATA.meg with DATA\SCRIPTS\...).
+    // The manager doesn't expose entry lists, so re-parse each mod meg from
+    // disk and read entries directly (loose override would apply via the
+    // manager, but no loose Lua exists in TR).
+    for (const std::string& megName : {"UGCCEAIDATA.meg", "ZC_MISSIONS_DATA.meg"}) {
+        std::string path = dataDir + "\\" + megName;
+        std::string bytes = readFile(path);
+        if (bytes.empty()) continue;
+        try {
+            eaw::MegFile meg = eaw::MegFile::Parse(
+                std::vector<uint8_t>(bytes.begin(), bytes.end()));
+            for (const auto& e : meg.entries()) {
+                const std::string& name = meg.nameOf(e);
+                if (!hasSuffix(name, ".lua")) continue;
+                auto entryBytes = meg.read(e, std::vector<uint8_t>(bytes.begin(), bytes.end()));
+                scanText(std::string(entryBytes.begin(), entryBytes.end()),
+                         "meg:" + megName + ":" + name);
+            }
+        } catch (const std::exception&) {
         }
     }
     std::printf("lua scripts scanned: %zu (mod root %s)\n",

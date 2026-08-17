@@ -149,6 +149,61 @@ int objGetOwner(lua_State* s) {
     return 1;
 }
 
+int objGetFaction(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    const Player* p = w->sim->player(o->playerId);
+    if (!p) { lua_pushnil(s); return 1; }
+    lua_pushstring(s, p->factionName.c_str());
+    return 1;
+}
+
+int objGetForce(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const GameObject* o = wrapperObject(s, w);
+    if (!o) { lua_pushnil(s); return 1; }
+    // Find the taskforce containing this object (galactic mode).
+    for (const TaskForce* f : w->sim->forcesOfPlayer(o->playerId)) {
+        for (int uid : f->units) {
+            if (uid == o->id) {
+                pushWrapper(s, w->sim, WrapperKind::TaskForce, f->id);
+                return 1;
+            }
+        }
+    }
+    lua_pushnil(s);
+    return 1;
+}
+
+int objSetTargetingPriorities(lua_State* s, bool land) {
+    Wrapper* w = checkWrapper(s, 1);
+    GameObject* o = w->sim->object(w->id);
+    if (!o) return 0;
+    std::vector<std::string>& dst =
+        land ? o->landTargetingPriorities : o->targetingPriorities;
+    dst.clear();
+    // Arg 2: a table of priority category names (ordered).
+    if (lua_istable(s, 2)) {
+        lua_pushnil(s);
+        while (lua_next(s, 2) != 0) {
+            if (lua_isstring(s, -1)) dst.push_back(lua_tostring(s, -1));
+            lua_pop(s, 1);
+        }
+    } else if (lua_isstring(s, 2)) {
+        dst.push_back(lua_tostring(s, 2));
+    }
+    return 0;
+}
+
+int objSetTargetingPrioritiesFn(lua_State* s) {
+    return objSetTargetingPriorities(s, false);
+}
+
+int objSetLandTargetingPrioritiesFn(lua_State* s) {
+    return objSetTargetingPriorities(s, true);
+}
+
 int objGetType(lua_State* s) {
     Wrapper* w = checkWrapper(s, 1);
     const GameObject* o = wrapperObject(s, w);
@@ -890,6 +945,7 @@ const MethodEntry kObjectMethods[] = {
     {"Get_Shield", objGetShield},
     {"Get_Energy", objGetEnergy},
     {"Get_Owner", objGetOwner},
+    {"Get_Faction", objGetFaction},
     {"Get_Type", objGetType},
     {"Get_ID", objGetId},
     {"Get_Position", objGetPosition},
@@ -900,6 +956,9 @@ const MethodEntry kObjectMethods[] = {
     {"Is_Hero", objIsHero},
     {"Is_Selectable", objIsSelectable},
     {"Get_Name", objGetName},
+    {"Get_Force", objGetForce},
+    {"Set_Targeting_Priorities", objSetTargetingPrioritiesFn},
+    {"Set_Land_AI_Targeting_Priorities", objSetLandTargetingPrioritiesFn},
     {"Get_Garrisoned_Units", objGetGarrisonedUnits},
     {"Has_Garrison", objHasGarrison},
     {"Is_In_Garrison", objIsInGarrison},
