@@ -137,6 +137,17 @@ struct GameObject {
     };
     std::vector<std::pair<std::string, AbilityState>> abilityStates;
     std::vector<int> garrisonedUnits; // ids of units inside
+    // Hero / unique state (Set_Hero / Is_Unique / Get_Unique_ID). The game
+    // marks specific unit instances as heroes and gives them a unique id
+    // (the type's hero flag is the static default; these are per-instance).
+    bool hero = false;         // Set_Hero(true/false)
+    bool unique = false;       // Is_Unique (heroes are unique)
+    int uniqueId = 0;          // Get_Unique_ID (0 = none)
+    // Free store: units parked in the force's free store (the game's
+    // Get_Free_Store / Get_Units_In_Free_Store surface). A unit is in the
+    // free store when it has no orders and is not part of a taskforce.
+    bool inFreeStore = false;
+    int freeStoreForceId = 0;  // the force whose free store holds this unit
 };
 
 // A formation: a leader object plus member ids that follow it (the game's
@@ -304,6 +315,7 @@ public:
     int addPlanet(const std::string& name, const std::string& factionName,
                   const Vec3& pos);
     const Planet* planet(int id) const;
+    Planet* planet(int id);
     const Planet* findPlanet(const std::string& name) const;
     Planet* findPlanet(const std::string& name);
     std::vector<const Planet*> allPlanets() const;

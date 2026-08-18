@@ -68,6 +68,13 @@ int gameRandomFloat(lua_State* s) {
     return 1;
 }
 
+// __call for the GameRandom table: the table is arg 1, so drop it before
+// delegating to gameRandom (same pattern as the Thread tables).
+int gameRandomTableCall(lua_State* s) {
+    lua_remove(s, 1);                      // drop the table
+    return gameRandom(s);
+}
+
 // ---- threads ------------------------------------------------------------
 // Create_Thread(name, param): starts _G[name] in a new coroutine next frame.
 // We implement it synchronously (start immediately) since we have no frame
@@ -291,7 +298,18 @@ void registerPgBindings(LuaHost& lua) {
 
     // time / random
     reg(s, "GetCurrentTime", getCurrentTime);
-    reg(s, "GameRandom", gameRandom);
+    // GameRandom is a callable table: GameRandom(min,max) for ints AND
+    // GameRandom.Get_Float(min,max) for floats (the game's PGBASE surface).
+    lua_newtable(s);
+    lua_pushcfunction(s, gameRandom);
+    lua_setfield(s, -2, "Get_Integer");
+    lua_pushcfunction(s, gameRandomFloat);
+    lua_setfield(s, -2, "Get_Float");
+    lua_newtable(s);                   // metatable
+    lua_pushcfunction(s, gameRandomTableCall);
+    lua_setfield(s, -2, "__call");
+    lua_setmetatable(s, -2);
+    lua_setglobal(s, "GameRandom");
     reg(s, "GameRandom_Get_Float", gameRandomFloat);
 
     // misc

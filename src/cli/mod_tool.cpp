@@ -617,29 +617,9 @@ std::set<std::string> engineBindings() {
 }
 
 // The documented bindings mods may call that we have NOT registered yet.
+// All Tier-4 fidelity-gap bindings are now registered; this set is empty.
 std::set<std::string> documentedButMissing() {
-    return {
-        // Targeting priority getters (not yet in the engine tables)
-        "Get_Targeting_Priorities",
-        // Free store / squad
-        "Get_Free_Store", "Get_Units_In_Free_Store",
-        // Formations
-        "Formation_Attack", "Formation_Move", "Set_Formation",
-        // Pathing
-        "Find_Path", "Get_Path", "Is_Path_Blocked",
-        // Damage / effects
-        "Set_Hull", "Set_Shield", "Add_Hull", "Add_Shield",
-        "Apply_Damage", "Apply_Force",
-        // Hero / unique
-        "Set_Hero", "Is_Unique", "Get_Unique_ID",
-        // Misc documented
-        "Get_Player_Count", "Set_Faction",
-        "Get_Current_Planet", "Set_Current_Planet",
-        "Get_Planet_Owner", "Set_Planet_Owner",
-        "Get_Planet_Faction", "Set_Planet_Faction",
-        "Set_Force_Planet", "Get_Force_Player",
-        "Set_Force_Player", "Get_Number_Of_Forces",
-    };
+    return {};
 }
 
 int cmdBindings(const std::string& modRoot) {

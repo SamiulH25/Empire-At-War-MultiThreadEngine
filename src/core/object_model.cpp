@@ -531,6 +531,13 @@ const Planet* SimState::planet(int id) const {
     return nullptr;
 }
 
+Planet* SimState::planet(int id) {
+    for (auto& p : planets_) {
+        if (p.id == id) return &p;
+    }
+    return nullptr;
+}
+
 const Planet* SimState::findPlanet(const std::string& name) const {
     for (const auto& p : planets_) {
         if (p.name == name) return &p;

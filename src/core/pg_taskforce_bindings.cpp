@@ -247,6 +247,166 @@ int tfLeaveGarrison(lua_State* s) {
     return 0;
 }
 
+// ---- force / planet setters + global queries ------------------------------
+
+// Set_Force_Planet(force, planet) -> nil
+int tfSetForcePlanet(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    TaskForce* f = w->sim->taskForce(w->id);
+    if (f && lua_isuserdata(s, 2)) {
+        Wrapper* p = checkWrapper(s, 2);
+        if (p->kind == WrapperKind::Planet) f->planetId = p->id;
+    }
+    return 0;
+}
+
+// Get_Force_Player(force) -> player wrapper (the force's owner)
+int tfGetForcePlayer(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    const TaskForce* f = wrapperForce(s, w);
+    if (!f) { lua_pushnil(s); return 1; }
+    pushWrapper(s, w->sim, WrapperKind::Player, f->playerId);
+    return 1;
+}
+
+// Set_Force_Player(force, player) -> nil
+int tfSetForcePlayer(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    TaskForce* f = w->sim->taskForce(w->id);
+    if (f && lua_isuserdata(s, 2)) {
+        Wrapper* p = checkWrapper(s, 2);
+        if (p->kind == WrapperKind::Player) f->playerId = p->id;
+    }
+    return 0;
+}
+
+// Get_Current_Planet(object/force) -> planet wrapper
+// For a taskforce: its current planet. For an object: the planet it's at
+// (found via the containing force's planet).
+int tfGetCurrentPlanet(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    int planetId = -1;
+    if (w->kind == WrapperKind::TaskForce) {
+        const TaskForce* f = w->sim->taskForce(w->id);
+        if (f) planetId = f->planetId;
+    } else if (w->kind == WrapperKind::Object) {
+        const GameObject* o = wrapperObject(s, w);
+        if (o) {
+            for (const TaskForce* f : w->sim->forcesOfPlayer(o->playerId)) {
+                for (int uid : f->units) {
+                    if (uid == o->id) { planetId = f->planetId; break; }
+                }
+                if (planetId >= 0) break;
+            }
+        }
+    }
+    if (planetId < 0) { lua_pushnil(s); return 1; }
+    pushPlanet(s, w->sim, w->sim->planet(planetId));
+    return 1;
+}
+
+// Set_Current_Planet(object/force, planet) -> nil
+int tfSetCurrentPlanet(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (!lua_isuserdata(s, 2)) return 0;
+    Wrapper* p = checkWrapper(s, 2);
+    if (p->kind != WrapperKind::Planet) return 0;
+    if (w->kind == WrapperKind::TaskForce) {
+        TaskForce* f = w->sim->taskForce(w->id);
+        if (f) f->planetId = p->id;
+    } else if (w->kind == WrapperKind::Object) {
+        // Move the object's force to the planet (galactic relocation).
+        GameObject* o = w->sim->object(w->id);
+        if (o) {
+            for (const TaskForce* cf : w->sim->forcesOfPlayer(o->playerId)) {
+                TaskForce* f = w->sim->taskForce(cf->id);
+                for (int uid : f->units) {
+                    if (uid == o->id) { f->planetId = p->id; break; }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+// Get_Number_Of_Forces() -> integer (total forces in the sim)
+int getNumberOfForces(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    lua_pushinteger(s, static_cast<int>(sim->forces().size()));
+    return 1;
+}
+
+// Get_Player_Count() -> integer
+int getPlayerCount(lua_State* s) {
+    SimState* sim = simFromUpvalue(s, 1);
+    lua_pushinteger(s, static_cast<int>(sim->allPlayers().size()));
+    return 1;
+}
+
+// Get_Free_Store(force) -> table of objects (alias of Get_Units_In_Free_Store)
+int tfGetFreeStore(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (w->kind != WrapperKind::TaskForce) { lua_pushnil(s); return 1; }
+    const TaskForce* f = w->sim->taskForce(w->id);
+    if (!f) { lua_pushnil(s); return 1; }
+    lua_createtable(s, 0, 0);
+    int n = 1;
+    for (const GameObject* o : w->sim->allObjects()) {
+        if (o->inFreeStore && o->freeStoreForceId == f->id) {
+            pushObject(s, w->sim, o);
+            lua_rawseti(s, -2, n++);
+        }
+    }
+    return 1;
+}
+
+// Get_Planet_Owner(planet) -> player wrapper (uses the planet's faction)
+int planetGetOwnerPlayer(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (w->kind != WrapperKind::Planet) { lua_pushnil(s); return 1; }
+    const Planet* p = w->sim->planet(w->id);
+    if (!p || p->factionName.empty()) { lua_pushnil(s); return 1; }
+    const Player* pl = w->sim->findPlayer(p->factionName);
+    if (!pl) { lua_pushnil(s); return 1; }
+    pushWrapper(s, w->sim, WrapperKind::Player, pl->id);
+    return 1;
+}
+
+// Set_Planet_Owner(planet, player) -> nil (sets the planet's faction)
+int planetSetOwner(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (w->kind != WrapperKind::Planet) return 0;
+    Planet* p = w->sim->planet(w->id);
+    if (!p) return 0;
+    if (lua_isuserdata(s, 2)) {
+        Wrapper* pl = checkWrapper(s, 2);
+        const Player* player = w->sim->player(pl->id);
+        if (player) p->factionName = player->factionName;
+    } else {
+        p->factionName = luaL_checkstring(s, 2);
+    }
+    return 0;
+}
+
+// Get_Planet_Faction(planet) -> faction name string
+int planetGetFaction(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (w->kind != WrapperKind::Planet) { lua_pushnil(s); return 1; }
+    const Planet* p = w->sim->planet(w->id);
+    if (!p || p->factionName.empty()) { lua_pushnil(s); return 1; }
+    lua_pushstring(s, p->factionName.c_str());
+    return 1;
+}
+
+// Set_Planet_Faction(planet, faction-name) -> nil
+int planetSetFaction(lua_State* s) {
+    Wrapper* w = checkWrapper(s, 1);
+    if (w->kind != WrapperKind::Planet) return 0;
+    Planet* p = w->sim->planet(w->id);
+    if (p) p->factionName = luaL_checkstring(s, 2);
+    return 0;
+}
+
 // ---- method table --------------------------------------------------------
 
 const struct { const char* name; lua_CFunction fn; } kTfMethods[] = {
@@ -267,11 +427,24 @@ const struct { const char* name; lua_CFunction fn; } kTfMethods[] = {
     {"Leave_Garrison", tfLeaveGarrison},
     // Galactic mode.
     {"Get_Planet", tfGetPlanet},
+    // Force / planet setters + queries.
+    {"Set_Force_Planet", tfSetForcePlanet},
+    {"Get_Force_Player", tfGetForcePlayer},
+    {"Set_Force_Player", tfSetForcePlayer},
+    {"Get_Current_Planet", tfGetCurrentPlanet},
+    {"Set_Current_Planet", tfSetCurrentPlanet},
+    {"Get_Free_Store", tfGetFreeStore},
+    {"Get_Units_In_Free_Store", tfGetFreeStore},
 };
 
 const struct { const char* name; lua_CFunction fn; } kPlanetMethods[] = {
     {"Get_Name", planetGetName},
     {"Get_Owner", planetGetOwner},
+    {"Get_Planet_Owner", planetGetOwnerPlayer},
+    {"Set_Planet_Owner", planetSetOwner},
+    {"Get_Planet_Faction", planetGetFaction},
+    {"Set_Planet_Faction", planetSetFaction},
+    {"Set_Faction", planetSetFaction},
 };
 
 } // namespace
@@ -283,6 +456,14 @@ void registerTaskForceBindings(LuaHost& lua, SimState& sim) {
     lua_pushlightuserdata(s, &sim);
     lua_pushcclosure(s, findPlanet, 1);
     lua_setglobal(s, "FindPlanet");
+
+    // Global force/player queries (sim upvalue).
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, getNumberOfForces, 1);
+    lua_setglobal(s, "Get_Number_Of_Forces");
+    lua_pushlightuserdata(s, &sim);
+    lua_pushcclosure(s, getPlayerCount, 1);
+    lua_setglobal(s, "Get_Player_Count");
 
     // Add the taskforce + planet methods to the shared wrapper metatable's
     // __index via the __PgWrapperMethods registry table (kind -> name -> fn).

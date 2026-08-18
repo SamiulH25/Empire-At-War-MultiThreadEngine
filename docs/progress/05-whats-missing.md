@@ -37,12 +37,21 @@ Supporting work:
 
 What still needs closing:
 
-- The scripts reference global helpers (`FindTarget`, `DebugMessage`,
+- ~~The scripts reference global helpers (`FindTarget`, `DebugMessage`,
   `TestValid`, `Project_By_Unit_Range`, `EvaluatePerception`,
   `PlayerSpecificName`, `ScriptExit`, `FindDeadlyEnemy`, `BlockOnCommand`,
   `GameRandom.Get_Float`, ...) that are only called at runtime, not load
-  time — calling any of them errors today. Implementing the commonly used
-  ones is the next gap.
+  time — calling any of them errors today.~~ **DONE (2026-08-18).** All nine
+  helpers are registered (`pg_object_bindings.cpp`, sim-upvalue pattern) and
+  `GameRandom` is now a callable table (`GameRandom.Get_Float()` works).
+  `mod_tool run` executes all four library scripts (PGTASKFORCE, PGEVENTS,
+  PGSPAWNUNITS, PGSTATEMACHINE) for 120 ticks with exit 0, and
+  `mod_tool bindings` reports **0 documented-but-missing** bindings for
+  Thrawn's Revenge. Covered by `script_helper_tests` (15 checks, in ctest).
+  `FindTarget`/`FindDeadlyEnemy` use the built-in hull/distance heuristic;
+  `EvaluatePerception` evaluates the loaded equation set (attached via
+  `attachScriptPerceptions`); `PlayerSpecificName` is a documented identity
+  passthrough.
 - `Register_Timer`/`Process_Timers`/`Pump_Service` and the thread pump
   (`pumpThreads` in `pg_bindings.cpp`) are the runtime backbone — script
   execution is already driven through them, not one-shot `runScript`.
@@ -112,17 +121,27 @@ Progress this session:
 
 Remaining gaps:
 
-- **Free store / squads** — `Get_Free_Store`, `Get_Units_In_Free_Store`
-  documented, not implemented.
-- **Pathing helpers** — `Find_Path`, `Get_Path`, `Is_Path_Blocked`.
-- **Hero / unique** — `Set_Hero`, `Is_Unique`, `Get_Unique_ID`.
-- **Planet/force setters** — `Set_Faction`, `Get_Current_Planet`,
-  `Set_Current_Planet`, `Get_Planet_Owner`/`Set_Planet_Owner`,
-  `Get_Planet_Faction`/`Set_Planet_Faction`, `Set_Force_Planet`,
-  `Get_Force_Player`, `Set_Force_Player`, `Get_Number_Of_Forces`,
-  `Get_Player_Count`.
-- **`Get_Faction`/`Get_Force`** — implemented for objects; verify
-  player-level `Get_Faction` semantics match the game.
+- **~~Free store / squads~~** — **DONE (2026-08-18).** `Get_Free_Store`,
+  `Get_Units_In_Free_Store` registered on the taskforce wrapper; the sim
+  tracks per-object `inFreeStore`/`freeStoreForceId`.
+- **~~Pathing helpers~~** — **DONE (2026-08-18, approximate).**
+  `Find_Path`, `Get_Path`, `Is_Path_Blocked` registered. `Is_Path_Blocked`
+  uses the grid's line-blocked (voxel DDA) check; `Find_Path`/`Get_Path`
+  return the direct-line result when clear, else a placeholder cost — the
+  frame-sliced `PathfindingSystem` is not reachable from the script thread
+  yet (documented limitation).
+- **~~Hero / unique~~** — **DONE (2026-08-18).** `Set_Hero`, `Is_Unique`,
+  `Get_Unique_ID` registered; per-object hero/unique flags added to the sim.
+- **~~Planet/force setters~~** — **DONE (2026-08-18).** `Set_Faction`
+  (player), `Get_Current_Planet`/`Set_Current_Planet`,
+  `Get_Planet_Owner`/`Set_Planet_Owner`, `Get_Planet_Faction`/
+  `Set_Planet_Faction`, `Set_Force_Planet`, `Get_Force_Player`/
+  `Set_Force_Player`, `Get_Number_Of_Forces`, `Get_Player_Count` registered.
+- **~~`Get_Targeting_Priorities`~~** — **DONE (2026-08-18).** Getter added
+  alongside the existing setters.
+- **`Get_Faction`/`Get_Force`** — implemented for objects; player-level
+  `Get_Faction` semantics verified via `Set_Faction` round-trip in
+  `script_helper_tests`.
 
 ## 7. Docs Update
 

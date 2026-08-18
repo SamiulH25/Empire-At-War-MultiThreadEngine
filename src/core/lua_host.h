@@ -37,6 +37,13 @@ public:
     // Loads and runs a script from a string. Throws LuaError on syntax/run error.
     void runScript(const std::string& chunk, const std::string& name = "chunk");
 
+    // Loads a chunk (source or the game's custom `\x1bLup` bytecode) onto the
+    // stack as a Lua function, without running it. Returns 0 on success, or a
+    // non-zero status with an error message on the stack (Lua semantics).
+    // Source chunks go through luaL_loadbuffer; the game bytecode dialect is
+    // handled by the custom loader in lua_host.cpp.
+    int loadChunk(const std::string& chunk, const std::string& name = "chunk");
+
     // Calls a global function by name with no args. Throws LuaError.
     void callGlobal(const std::string& name);
 

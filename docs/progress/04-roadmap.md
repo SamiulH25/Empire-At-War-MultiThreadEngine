@@ -37,14 +37,16 @@ work splits into "finish the simulation" and "take it back to the real game"
    point at a mod's `Data` folder (Thrawn's Revenge, EAW Remake, Republic at
    War): MegaFileManager load order + loose-file override, unit XML, Lua
    scripts.
-7. **Script compatibility harness** — **execution added.** `mod_tool run`
+7. **Script compatibility harness** — **DONE (2026-08-18).** `mod_tool run`
    loads a real mod script (loose file or meg entry) through
    `ScriptManager::loadScript` and pumps it for N ticks, reporting runtime
    errors; exit code 2 flags scripts that need a documented-but-missing
-   binding. Remaining gap: making the common AI library scripts
-   (PGTASKFORCE, PGEVENTS, PGSPAWNUNITS, PGSTATEMACHINE) load and define
-   their functions — many still call game-state-dependent bindings that
-   return nil outside a battle context.
+   binding. The runtime helper gap (FindTarget, FindDeadlyEnemy,
+   DebugMessage, TestValid, Project_By_Unit_Range, EvaluatePerception,
+   PlayerSpecificName, ScriptExit, BlockOnCommand, GameRandom.Get_Float) is
+   closed: all four library scripts (PGTASKFORCE, PGEVENTS, PGSPAWNUNITS,
+   PGSTATEMACHINE) load and pump cleanly, and `mod_tool bindings` reports
+   **0 documented-but-missing** for Thrawn's Revenge.
 
 ## Tier 3 — Back to the Real Game
 
@@ -54,21 +56,23 @@ work splits into "finish the simulation" and "take it back to the real game"
    hook surface; the job system and parallel patterns are proven here.
    Next: validate the hook offsets against the real exe (layout drift) and
    wire the hooked tick into `ParallelTick`/`JobSystem`.
-9. **Bytecode compat** — the game ships custom-fork Lua bytecode (doc 03);
-   a loader for that format would let the engine run the game's own AI
-   scripts, not just mod source. Reverse the `luaU_undump` header from a
-   real `config.meg` chunk (`test_real_lua.cpp` has the harness).
+9. **Bytecode compat** — the game ships custom-fork Lua bytecode (doc 03).
+   **Header reverse-engineered (2026-08-18):** the fork uses magic `\x1bLup`
+   (not `\x1bLua`), version 0x51 (Lua 5.1), and a 6-byte `Instruction`
+   (vanilla: 4). A loader for this dialect would let the engine run the
+   game's own AI scripts (`scripts/dump_bytecode_header.py` + doc 03).
 
 ## Tier 4 — Engine Completeness
 
-10. **Engine fidelity gaps** — targeting priority tables are now consumed by
-    the AI targeting loop; formations (`Set_Formation` / `Formation_Attack`
-    / `Formation_Move`) and hull/shield setters (`Set_Hull` / `Set_Shield` /
-    `Add_Hull` / `Add_Shield` / `Apply_Damage`) are implemented. Remaining:
-    free store / squads (`Get_Free_Store`, `Get_Units_In_Free_Store`),
-    pathing helpers (`Find_Path` / `Get_Path` / `Is_Path_Blocked`),
-    hero/unique getters, planet-owner setters, and `Get_Faction` /
-    `Get_Force` player-level semantics verification.
+10. **Engine fidelity gaps** — **DONE (2026-08-18).** The full documented
+    binding surface is now registered: free store / squads (`Get_Free_Store`,
+    `Get_Units_In_Free_Store`), pathing helpers (`Find_Path` / `Get_Path` /
+    `Is_Path_Blocked` — direct-line approximation), hero/unique
+    (`Set_Hero` / `Is_Unique` / `Get_Unique_ID`), planet-owner setters,
+    force setters, `Get_Targeting_Priorities`, `Get_Number_Of_Forces`,
+    `Get_Player_Count`, and player-level `Set_Faction`. `mod_tool bindings`
+    reports 0 documented-but-missing. Covered by `script_helper_tests`
+    (30 checks).
 11. **Determinism guard-rails** — a repeat-run byte-identical battle test
     (`simulation_tests`) runs the same battle at 1/2/4 workers and asserts
     identical serialized state. A per-tick state-hash "verify mode" is a

@@ -2,6 +2,10 @@
 #include "core/lua_host.h"
 #include "core/meg_file.h"
 
+extern "C" {
+#include "lua.h"
+}
+
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -35,18 +39,21 @@ int main(int argc, char** argv) {
         std::string chunk(data.begin(), data.end());
 
         eaw::LuaHost lua;
-        // The bytecode references the PG* engine bindings (ReserveForce etc.)
-        // which we don't register yet — so loading is what we test (the chunk
-        // defines functions; running it may call missing globals at exec time).
-        bool loaded = false;
-        try {
-            lua.runScript(chunk, argv[2]);
-            loaded = true;
-        } catch (const eaw::LuaError& ex) {
-            std::printf("load error: %s\n", ex.what());
+        // The bytecode is the game's custom `\x1bLup` dialect. The engine's
+        // loadChunk recognizes it and validates the header; the full custom
+        // undump is not implemented yet, so loading the *function* is not
+        // expected to succeed — but the error must be the precise diagnostic,
+        // not vanilla's generic "bad header".
+        int status = lua.loadChunk(chunk, argv[2]);
+        bool recognized = false;
+        if (status != 0) {
+            const char* msg = lua_tostring(lua.state(), -1);
+            recognized = msg && std::string(msg).find("\\x1bLup") != std::string::npos;
+            std::printf("load status %d: %s\n", status, msg ? msg : "(no msg)");
+            lua_pop(lua.state(), 1);
         }
-        check(loaded, "game bytecode loads in Lua 5.1 host");
-        return failures ? 1 : 0;
+        check(recognized, "game bytecode dialect is recognized (\\x1bLup)");
+        return recognized ? 0 : 1;
     } catch (const std::exception& ex) {
         std::printf("error: %s\n", ex.what());
         return 1;

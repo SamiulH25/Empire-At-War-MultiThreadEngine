@@ -264,6 +264,12 @@ add_executable(ai_plan_tests
 target_link_libraries(ai_plan_tests PRIVATE eaw_core)
 add_test(NAME ai_plan_tests COMMAND ai_plan_tests)
 
+add_executable(script_helper_tests
+    tests/test_script_helpers.cpp
+)
+target_link_libraries(script_helper_tests PRIVATE eaw_core)
+add_test(NAME script_helper_tests COMMAND script_helper_tests)
+
 # Real-game smoke test (needs the game install; run manually, not in ctest)
 add_executable(real_lua_test
     tests/test_real_lua.cpp

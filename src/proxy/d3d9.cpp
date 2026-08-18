@@ -77,15 +77,18 @@ void ScanObjectLists(void* ctx) {
 
 // Called once per frame by the game loop (before the real sim tick).
 void HookedTick(void* hwnd, float dt) {
-    // First call: discover the game's live object lists from the tick
-    // context. Afterwards, ParallelTick fans them across the engine's
-    // workers. Additive — the real tick still runs below.
-    static bool scanned = false;
-    if (!scanned) {
-        ScanObjectLists(hwnd);
-        scanned = true;
+    // Re-scan the object lists every tick. The game's context object lists
+    // change as battles load/unload (menu: 1 object; battle: hundreds), so a
+    // one-time scan would go stale. The scan is cheap (6 slot reads + probes)
+    // and validated against the real battle build (slot 4 = live unit list,
+    // 724-938 objects — docs/progress/06-patch-dll-findings.md).
+    ScanObjectLists(hwnd);
+    // The parallel object-update pass is OFF by default: it races the game's
+    // serial tick (Finding 2 — confirmed crash 2026-08-18). Enable only for
+    // controlled experiments, never for normal play.
+    if (getenv("EAW_PATCH_PARALLEL_UPDATE")) {
+        eaw::ParallelTick(dt);
     }
-    eaw::ParallelTick(dt);
 
     // Proof-of-life + telemetry: log the first few ticks.
     static unsigned long long count = 0;

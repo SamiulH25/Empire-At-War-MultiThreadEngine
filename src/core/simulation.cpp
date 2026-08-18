@@ -171,6 +171,11 @@ void stepFormations(eaw::SimState& sim) {
 Simulation::Simulation(unsigned workerThreads)
     : scripts_(files_), jobs_(workerThreads),
       pathfinding_(grid_, jobs_, pathOptions_) {
+    // Script helpers that need the perception system (EvaluatePerception)
+    // get it after construction — the script manager is built before
+    // perceptions_ in member order.
+    attachScriptPerceptions(&perceptions_);
+    attachScriptPathGrid(&grid_);
 }
 
 void Simulation::configure(const GameConstants& gc) {

@@ -3,28 +3,32 @@
 **Status:** Lua manager + thread mechanism located; **bytecode compat issue found** (2026-08-16)
 **Last updated:** 2026-08-16
 
-## ⚠️ Key Compat Finding: Game Lua is a Custom Fork (2026-08-16)
+## ⚠️ Key Compat Finding: Game Lua is a Custom Fork (2026-08-16, header verified 2026-08-18)
 
 The game ships its AI scripts as **precompiled Lua bytecode** (not source). Verified by
 extracting `DATA\SCRIPTS\AI\BUILDGROUNDFORCESPLAN.LUA` from config.meg — it starts with
-the `\x1bLua` magic.
+the **custom magic `\x1bLup`** (not vanilla `\x1bLua`).
 
-The chunk header reveals a **non-vanilla Lua 5.1 build**:
+The chunk header (from the installed corruption build, re-verified 2026-08-18 via
+`scripts/dump_bytecode_header.py`):
 
 ```
-game:   1b 4c 75 61 51 01 04 04 04 06 08 09 09 08 ...
+game:   1b 4c 75 70 51 01 04 04 04 06 08 09 09 08 b6 09 ...
+                ^^  ^^  ^^  ^^  ^^  ^^  ^^  ^^  ^^
 vanilla 1b 4c 75 61 51 01 04 04 04 04 08 00 00 00 ...
-                ^^  ^^  ^^  ^^  ^^  ^^  ^^  ^^
 ```
 
+- **Signature `\x1bLup`** — custom fork magic (vanilla: `\x1bLua`). This alone
+  makes vanilla `luaU_undump` reject the chunk.
 - `0x51` = Lua 5.1 (version matches vanilla)
 - `sizeof(Instruction) = 0x06` (vanilla: 0x04) — **non-standard instruction size**
-- `sizeof(lua_Number) = 0x08` (matches)
-- trailing `09 09 08` vs vanilla `00 00 00` — custom size fields
+- `sizeof(lua_Number) = 0x08` (double, matches vanilla)
+- trailing `09 09 08` vs vanilla `00 00 00` — custom size fields (the fork's
+  `sizeof(lu_byte)`/`sizeof(Instruction)`/integral layout differs)
 
-**Conclusion:** Petroglyph compiled a modified Lua 5.1 (custom `Instruction` size /
-`lua_Number` layout). Vanilla Lua 5.1.5 **cannot load the game's bytecode** (verified:
-`bad header in precompiled chunk`).
+**Conclusion:** Petroglyph compiled a modified Lua 5.1 (custom magic, `Instruction`
+size / `lua_Number` layout). Vanilla Lua 5.1.5 **cannot load the game's bytecode**
+(verified: `bad header in precompiled chunk`).
 
 **Implications for the engine:**
 - The reimplementation **cannot execute the game's precompiled AI scripts** without
@@ -34,6 +38,36 @@ vanilla 1b 4c 75 61 51 01 04 04 04 04 08 00 00 00 ...
 - Community docs (Alamo Engine Tools) document the *source-level* API (PGBase etc.) —
   mods overwhelmingly ship source, so the engine should target **source Lua 5.1** and
   document the bytecode limitation.
+
+## Bytecode Format Reverse-Engineering (2026-08-18)
+
+The game's loader was located in the exe (`FUN_1407c3f30` header checker,
+`FUN_1407c3cb0` LoadFunction, `FUN_1407c4490` LoadString, `FUN_1407c3980` raw
+reader, `FUN_1407c4260`/`FUN_1407c3a50` loaders) and the chunk format was
+partially decoded. **Confirmed:**
+
+- **Header (22 bytes):** magic `\x1bLup`(4) + version `0x51`(1) + format
+  `0x01`(1) + 8 size bytes `04 04 04 06 08 09 09 08`(8) + 8-byte number
+  format constant `b6 09 93 68 e7 f5 7d 41`(8). The size bytes are
+  endianness(4), sizeof(int)(4), sizeof(size_t)(4), sizeof(Instruction)(4),
+  then custom type sizes 6, 8, 9, 9, and sizeof(number)(8).
+- **Top-level function:** source string (4-byte length), linedefined(int),
+  lastlinedefined(int), nups/numparams/is_vararg/maxstacksize (4 bytes),
+  then code count + code (4-byte instructions), constants, upvalues, protos.
+- **Constants:** `[type byte][4-byte length][data]` — type 4 = string
+  (length-prefixed), 3 = number (8 bytes), 1 = boolean, 0 = nil.
+- **Nested proto source:** TValue-like `[type byte][4-byte len][string]`
+  (or nil) — different from the top-level plain string.
+
+**Remaining unknown:** the exact field ORDER inside nested protos (the walk
+parses the top function but diverges in nested protos — the code count read
+goes wrong after the TValue source). The instructions are 4 bytes in the
+stream but the VM's `Instruction` is 6 bytes (`FUN_1407c0090` expands them);
+the opcode numbering is fork-specific.
+
+**Tooling:** `scripts/dump_bytecode_header.py`, `scripts/walk_all_bytecode.py`,
+`scripts/trace_bytecode.py` (partial walker), `ghidra/lua_undump_*.txt`
+(loader decompiles). A full loader is the remaining Tier-3 work.
 
 ## What We Know
 
