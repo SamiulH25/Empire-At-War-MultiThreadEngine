@@ -10,6 +10,14 @@
 // per-frame sim tick, doc 04). For testing without the real game, set the
 // environment variable EAW_PATCH_TARGET=export:NAME to hook the export NAME
 // of the main executable instead (used by the fake_game harness).
+//
+// The offset is resolved at runtime by a signature scan first (Steam can
+// ship a different build where the tick moved); the hardcoded offset is the
+// fallback. The signature is the tick's verified prologue from the installed
+// corruption exe (2026-08-18, see docs/progress/06-patch-dll-findings.md):
+//   mov [rsp+0x10], rbx ; mov [rsp+0x18], rsi ; push rdi ; sub rsp, 0x30
+//   movaps xmm0, xmm1   ; movaps [rsp+0x20], xmm6
+//   addss xmm0, [rcx+8] ; movaps xmm6, xmm1 ; mov rbx, rcx ...
 #include <windows.h>
 
 #include <cstdio>
@@ -26,6 +34,20 @@ HMODULE g_realD3d9 = nullptr;
 
 // Sim tick offset (doc 04): FUN_14025ca30 - image base 0x140000000.
 constexpr DWORD64 kTickOffset = 0x25ca30;
+
+// The tick prologue signature (validated against the installed corruption
+// build). Scanning for it makes the hook survive Steam updates that move the
+// function.
+constexpr unsigned char kTickSig[] = {
+    0x48, 0x89, 0x5C, 0x24, 0x10,             // mov [rsp+0x10], rbx
+    0x48, 0x89, 0x74, 0x24, 0x18,             // mov [rsp+0x18], rsi
+    0x57,                                     // push rdi
+    0x48, 0x83, 0xEC, 0x30,                   // sub rsp, 0x30
+    0x0F, 0x28, 0xC1,                         // movaps xmm0, xmm1
+    0x0F, 0x29, 0x74, 0x24, 0x20,             // movaps [rsp+0x20], xmm6
+    0xF3, 0x0F, 0x58, 0x41, 0x08,             // addss xmm0, [rcx+8]
+};
+constexpr size_t kTickSigLen = sizeof(kTickSig);
 
 using TickFn = void (*)(void* hwnd, float dt);
 TickFn g_originalTick = nullptr;
@@ -109,8 +131,34 @@ void HookedTick(void* hwnd, float dt) {
     g_originalTick(hwnd, dt);
 }
 
-// Resolves the hook target: the main exe's SimTick export (test mode) or
-// StarWarsG.exe + kTickOffset (real game). Returns null if unavailable.
+// Scans the loaded game image for the tick prologue. Returns the runtime
+// address or null if the signature isn't found (different build).
+void* FindTickBySignature(HMODULE game) {
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(game);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+        reinterpret_cast<const char*>(game) + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
+    const DWORD64 base = reinterpret_cast<DWORD64>(game);
+    const IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec) {
+        // .text (executable code) — scan only the code section.
+        if (!(sec->Characteristics & IMAGE_SCN_MEM_EXECUTE)) continue;
+        const DWORD64 start = base + sec->VirtualAddress;
+        const DWORD64 size = sec->Misc.VirtualSize;
+        for (DWORD64 off = 0; off + kTickSigLen < size; ++off) {
+            if (std::memcmp(reinterpret_cast<const void*>(start + off),
+                            kTickSig, kTickSigLen) == 0) {
+                return reinterpret_cast<void*>(start + off);
+            }
+        }
+    }
+    return nullptr;
+}
+
+// Resolves the hook target: the main exe's SimTick export (test mode),
+// the signature-scanned tick (real game, Steam-update-proof), or the
+// hardcoded offset (fallback). Returns null if unavailable.
 void* ResolveTarget() {
     HMODULE mainModule = GetModuleHandleW(nullptr);
     const char* env = getenv("EAW_PATCH_TARGET");
@@ -121,6 +169,8 @@ void* ResolveTarget() {
     }
     HMODULE game = GetModuleHandleW(L"StarWarsG.exe");
     if (!game) return nullptr;
+    // Prefer the signature scan; fall back to the documented offset.
+    if (void* sig = FindTickBySignature(game)) return sig;
     return reinterpret_cast<void*>(
         reinterpret_cast<DWORD64>(game) + kTickOffset);
 }
@@ -142,6 +192,13 @@ void InstallTickHook() {
     FILE* f = fopen("eaw_patch_hits.txt", "w");
     if (f) {
         fprintf(f, "hook installed at %p\n", target);
+        // Record how the target resolved (signature scan vs hardcoded offset)
+        // so a Steam build change is visible in the telemetry.
+        HMODULE game = GetModuleHandleW(L"StarWarsG.exe");
+        if (game) {
+            bool sig = FindTickBySignature(game) != nullptr;
+            fprintf(f, "tick resolved by: %s\n", sig ? "signature" : "offset");
+        }
         fprintf(f, "workers: %u\n", g_jobs->workerCount());
         fclose(f);
     }

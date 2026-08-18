@@ -74,14 +74,20 @@ closure:
   largest 126 KB story mission both parse and load as closures
 - `real_lua_test` asserts the chunk loads; `LUP_DEBUG=1` traces progress
 
-**Remaining for full execution:** the fork's instruction encoding (the 4-byte
-stream values are not vanilla Lua opcodes — `FUN_1407c0090` translates them)
-and the fork's opcode semantics. Loading works; *executing* the loaded
-closure requires the opcode translation layer.
+**Key finding (2026-08-18): the shipped chunks contain NO instructions.**
+A full scan of all 324 Lua chunks in `config.meg` (`scripts/find_code_chunks.py`)
+shows every one is a **data-only shell** — source, constants, and nested
+protos, but zero code instructions. The game's `config.meg` AI/story scripts
+are stub/declarative shells; the actual logic is not shipped as bytecode
+opcodes in these chunks (it lives compiled into the exe or is driven by the
+constants). This means **opcode translation is not needed for the shipped
+chunks** — the loader is functionally complete for what the data contains.
+A custom VM would only matter if the game's real logic is found as bytecode
+elsewhere (e.g. other megs or future content).
 
 **Tooling:** `scripts/dump_bytecode_header.py`, `scripts/walk_all_bytecode.py`,
-`scripts/trace_bytecode.py` (partial walker), `ghidra/lua_undump_*.txt`
-(loader decompiles).
+`scripts/find_code_chunks.py`, `scripts/dump_proto_tree.py`,
+`ghidra/lua_undump_*.txt` (loader decompiles).
 
 ## What We Know
 

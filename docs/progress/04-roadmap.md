@@ -57,13 +57,12 @@ work splits into "finish the simulation" and "take it back to the real game"
    Next: validate the hook offsets against the real exe (layout drift) and
    wire the hooked tick into `ParallelTick`/`JobSystem`.
 9. **Bytecode compat** — the game ships custom-fork Lua bytecode (doc 03).
-   **Loader implemented (2026-08-18).** The custom loader
-   (`src/core/lup_loader.cpp`) parses the full confirmed format (header,
-   functions, constants, nested protos, lineinfo) into real Lua closures.
-   Verified against real `config.meg` chunks (top AI plan + 126 KB story
-   mission). Remaining: the fork's opcode translation layer (the 4-byte
-   stream instructions aren't vanilla opcodes) before loaded chunks can
-   *execute*.
+   **Loader implemented (2026-08-18).** `src/core/lup_loader.cpp` parses
+   the full confirmed format into real Lua closures, verified against real
+   `config.meg` chunks. **Key finding: all 324 shipped chunks are data-only
+   shells (zero instructions)** — the game's AI logic isn't shipped as
+   bytecode opcodes in these chunks, so opcode translation isn't needed for
+   what the game actually contains. The loader is functionally complete.
 
 ## Tier 4 — Engine Completeness
 
