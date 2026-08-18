@@ -59,15 +59,29 @@ partially decoded. **Confirmed:**
 - **Nested proto source:** TValue-like `[type byte][4-byte len][string]`
   (or nil) — different from the top-level plain string.
 
-**Remaining unknown:** the exact field ORDER inside nested protos (the walk
-parses the top function but diverges in nested protos — the code count read
-goes wrong after the TValue source). The instructions are 4 bytes in the
-stream but the VM's `Instruction` is 6 bytes (`FUN_1407c0090` expands them);
-the opcode numbering is fork-specific.
+### Loader implemented (2026-08-18)
+
+The custom loader (`src/core/lup_loader.cpp`, wired into `LuaHost::loadChunk`)
+parses the full confirmed format into real Lua `Proto` objects and pushes a
+closure:
+
+- header validation (magic, version, sizes)
+- function: source (4-byte len, 0 = nil), 2 ints, 4 bytes, code count +
+  code (4-byte stream values stored in the low 32 bits of the 6-byte
+  `Instruction`), locvars, upvalues, constants (`[type byte][data]`),
+  nested protos (recursive), lineinfo
+- verified against real `config.meg` chunks: the top-level AI plan and the
+  largest 126 KB story mission both parse and load as closures
+- `real_lua_test` asserts the chunk loads; `LUP_DEBUG=1` traces progress
+
+**Remaining for full execution:** the fork's instruction encoding (the 4-byte
+stream values are not vanilla Lua opcodes — `FUN_1407c0090` translates them)
+and the fork's opcode semantics. Loading works; *executing* the loaded
+closure requires the opcode translation layer.
 
 **Tooling:** `scripts/dump_bytecode_header.py`, `scripts/walk_all_bytecode.py`,
 `scripts/trace_bytecode.py` (partial walker), `ghidra/lua_undump_*.txt`
-(loader decompiles). A full loader is the remaining Tier-3 work.
+(loader decompiles).
 
 ## What We Know
 

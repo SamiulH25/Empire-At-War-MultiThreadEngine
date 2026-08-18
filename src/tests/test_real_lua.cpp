@@ -40,20 +40,17 @@ int main(int argc, char** argv) {
 
         eaw::LuaHost lua;
         // The bytecode is the game's custom `\x1bLup` dialect. The engine's
-        // loadChunk recognizes it and validates the header; the full custom
-        // undump is not implemented yet, so loading the *function* is not
-        // expected to succeed — but the error must be the precise diagnostic,
-        // not vanilla's generic "bad header".
+        // loadChunk parses it via the reverse-engineered loader (lup_loader)
+        // and pushes a Lua closure. `loaded` = the full chunk parsed.
         int status = lua.loadChunk(chunk, argv[2]);
-        bool recognized = false;
-        if (status != 0) {
+        bool loaded = status == 0;
+        if (!loaded) {
             const char* msg = lua_tostring(lua.state(), -1);
-            recognized = msg && std::string(msg).find("\\x1bLup") != std::string::npos;
             std::printf("load status %d: %s\n", status, msg ? msg : "(no msg)");
             lua_pop(lua.state(), 1);
         }
-        check(recognized, "game bytecode dialect is recognized (\\x1bLup)");
-        return recognized ? 0 : 1;
+        check(loaded, "game bytecode chunk parses and loads as a closure");
+        return loaded ? 0 : 1;
     } catch (const std::exception& ex) {
         std::printf("error: %s\n", ex.what());
         return 1;

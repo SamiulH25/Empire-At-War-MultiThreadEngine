@@ -39,6 +39,7 @@ add_library(eaw_core STATIC
     core/pg_taskforce_bindings.cpp
     core/pg_fog_bindings.cpp
     core/script_manager.cpp
+    core/lup_loader.cpp
     core/simulation.cpp
     core/parallel_tick.cpp
 )
